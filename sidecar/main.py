@@ -316,7 +316,7 @@ def api_organize_files(req: OrganizeRequest):
 
 @app.post("/api/files/organize_preview")
 def api_organize_preview(req: OrganizePreviewRequest):
-    return generate_organize_preview(req.file_paths, req.target_base, use_ai=True)
+    return generate_organize_preview(req.file_paths, req.target_base)
 
 # Undo Last Organize
 @app.post("/api/files/undo")

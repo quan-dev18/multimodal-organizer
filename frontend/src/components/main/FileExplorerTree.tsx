@@ -222,6 +222,7 @@ export const FileExplorerTree: React.FC = () => {
 
   // 1. Dry-Run Preview before Organize (Tự động nhận diện TOÀN BỘ file + folder con trong thư mục hiện tại)
   const handleOpenOrganizePreview = async () => {
+    setActionMessage("AI đang phân tích ngữ cảnh và lập sơ đồ phân loại...");
     // Collect all valid files and sub-folders in current folder
     const allLocalItems = [
       ...folders.map(f => f.path),
@@ -232,6 +233,7 @@ export const FileExplorerTree: React.FC = () => {
 
     if (targets.length === 0) {
       alert("Thư mục này không có tệp hoặc thư mục nào để sắp xếp.");
+      setActionMessage("");
       return;
     }
 
@@ -247,14 +249,17 @@ export const FileExplorerTree: React.FC = () => {
       const data = await res.json();
       setPreviewItems(data || []);
       setShowPreviewModal(true);
+      setActionMessage(`AI đã lập xong kế hoạch sắp xếp ${data.length} mục.`);
     } catch (e: any) {
       alert(`Lỗi tạo bản xem trước: ${e.message}`);
+      setActionMessage("");
     }
   };
 
   // 2. Confirm and Execute Organize with True Move (Di chuyển toàn bộ file & thư mục)
   const handleExecuteOrganize = async () => {
     setIsOrganizing(true);
+    setActionMessage("Đang tiến hành di chuyển và sắp xếp file theo cấu trúc AI...");
     const targets = previewItems.map(p => p.source_path);
 
     try {
@@ -269,7 +274,9 @@ export const FileExplorerTree: React.FC = () => {
       });
       const data = await res.json();
       setShowPreviewModal(false);
-      setActionMessage(`AI đã sắp xếp & chuyển dời thành công ${data.success_count} mục vào ${targetVaultPath}`);
+      const msg = `AI đã hoàn tất chuyển dời thành công ${data.success_count} mục vào ${targetVaultPath}`;
+      setActionMessage(msg);
+      alert(msg);
       loadDirectory(currentPath);
     } catch (e: any) {
       alert(`Lỗi sắp xếp: ${e.message}`);

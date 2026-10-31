@@ -189,9 +189,9 @@ def safe_clean_trash(file_paths: List[str]) -> Dict[str, Any]:
         "blocked_files": blocked
     }
 
-from ai_organizer import analyze_file_intent_rule_based, analyze_with_ai_llm
+from ai_organizer import analyze_file_intent
 
-def generate_organize_preview(file_paths: List[str], target_base_dir: str, use_ai: bool = True) -> List[Dict[str, Any]]:
+def generate_organize_preview(file_paths: List[str], target_base_dir: str) -> List[Dict[str, Any]]:
     preview_items = []
     target_base = Path(target_base_dir)
 
@@ -221,7 +221,7 @@ def generate_organize_preview(file_paths: List[str], target_base_dir: str, use_a
             continue
 
         # Intelligent Domain & AI Intent Analysis
-        intent = analyze_with_ai_llm(name, ext) if use_ai else analyze_file_intent_rule_based(name, ext)
+        intent = analyze_file_intent(name, ext)
         main_folder = intent["main_folder"]
         sub_folder = intent["sub_folder"]
         context_tag = intent["context_tag"]
@@ -231,7 +231,7 @@ def generate_organize_preview(file_paths: List[str], target_base_dir: str, use_a
         dest_file = dest_folder / name
 
         will_conflict = dest_file.exists()
-        action_name = "Chuyển & Đổi tên tránh trùng" if will_conflict else "Chuyển vào cấu trúc AI"
+        action_name = "Chuyển & Đổi tên tránh trùng" if will_conflict else "Chuyển dời an toàn"
 
         preview_items.append({
             "source_name": name,
@@ -251,7 +251,7 @@ def generate_organize_preview(file_paths: List[str], target_base_dir: str, use_a
 def organize_files_safe(
     file_paths: List[str], 
     target_base_dir: str, 
-    mode: str = "move" # Default to MOVE so files/folders are actually relocated
+    mode: str = "move"
 ) -> Dict[str, Any]:
     target_base = Path(target_base_dir)
     target_base.mkdir(parents=True, exist_ok=True)
@@ -281,7 +281,7 @@ def organize_files_safe(
 
         # Handle file move according to Domain & AI Structure
         ext = src.suffix
-        intent = analyze_file_intent_rule_based(src.name, ext)
+        intent = analyze_file_intent(src.name, ext)
         dest_dir = target_base / intent["main_folder"] / intent["sub_folder"]
         dest_dir.mkdir(parents=True, exist_ok=True)
 
