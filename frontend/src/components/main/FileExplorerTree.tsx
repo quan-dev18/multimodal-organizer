@@ -71,7 +71,9 @@ interface PreviewItem {
   source_name: string;
   source_path: string;
   dest_path: string;
+  is_dir: boolean;
   modality: string;
+  category_tag: string;
   size_formatted: string;
   has_conflict: boolean;
   action: string;
@@ -218,13 +220,18 @@ export const FileExplorerTree: React.FC = () => {
     }
   };
 
-  // 1. Dry-Run Preview before Organize (Tự động gom TOÀN BỘ file hợp lệ trong thư mục nếu không chọn thủ công)
+  // 1. Dry-Run Preview before Organize (Tự động nhận diện TOÀN BỘ file + folder con trong thư mục hiện tại)
   const handleOpenOrganizePreview = async () => {
-    const validFiles = files.filter(f => !f.is_junk && !f.is_hidden).map(f => f.path);
-    const targets = selectedPaths.size > 0 ? Array.from(selectedPaths) : validFiles;
+    // Collect all valid files and sub-folders in current folder
+    const allLocalItems = [
+      ...folders.map(f => f.path),
+      ...files.filter(f => !f.is_junk && !f.is_hidden).map(f => f.path)
+    ];
+
+    const targets = selectedPaths.size > 0 ? Array.from(selectedPaths) : allLocalItems;
 
     if (targets.length === 0) {
-      alert("Thư mục này không có tệp tin nào để sắp xếp.");
+      alert("Thư mục này không có tệp hoặc thư mục nào để sắp xếp.");
       return;
     }
 
@@ -245,7 +252,7 @@ export const FileExplorerTree: React.FC = () => {
     }
   };
 
-  // 2. Confirm and Execute Organize with SHA-256 Checksum Verification
+  // 2. Confirm and Execute Organize with True Move (Di chuyển toàn bộ file & thư mục)
   const handleExecuteOrganize = async () => {
     setIsOrganizing(true);
     const targets = previewItems.map(p => p.source_path);
@@ -254,11 +261,15 @@ export const FileExplorerTree: React.FC = () => {
       const res = await fetch(`${API_BASE}/files/organize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_paths: targets, target_base: targetVaultPath, mode: "copy" })
+        body: JSON.stringify({ 
+          file_paths: targets, 
+          target_base: targetVaultPath, 
+          mode: "move" // TRUE MOVE: Chuyển dời toàn bộ file & folder vào vị trí mới
+        })
       });
       const data = await res.json();
       setShowPreviewModal(false);
-      setActionMessage(`Đã sắp xếp an toàn & kiểm tra Checksum SHA-256 thành công ${data.success_count} tệp vào ${targetVaultPath}`);
+      setActionMessage(`AI đã sắp xếp & chuyển dời thành công ${data.success_count} mục vào ${targetVaultPath}`);
       loadDirectory(currentPath);
     } catch (e: any) {
       alert(`Lỗi sắp xếp: ${e.message}`);
@@ -622,23 +633,23 @@ export const FileExplorerTree: React.FC = () => {
 
               <div className="border border-slate-800 rounded-xl overflow-hidden">
                 <div className="bg-slate-950 px-3 py-2 grid grid-cols-12 text-[11px] font-mono text-slate-400 uppercase">
-                  <span className="col-span-5">Tệp Nguồn</span>
-                  <span className="col-span-5">Đích Đến (Theo Modality)</span>
-                  <span className="col-span-2 text-right">Hành Động</span>
+                  <span className="col-span-4">Tệp / Thư Mục Nguồn</span>
+                  <span className="col-span-5">Đích Đến Do AI Phân Tích Chuyên Ngành</span>
+                  <span className="col-span-3 text-right">Phân Loại Ngữ Cảnh</span>
                 </div>
                 <div className="max-h-64 overflow-y-auto divide-y divide-slate-800/80 text-xs font-mono">
                   {previewItems.map((item, idx) => (
                     <div key={idx} className="px-3 py-2 grid grid-cols-12 items-center text-slate-300">
-                      <div className="col-span-5 truncate pr-2 font-sans">
+                      <div className="col-span-4 truncate pr-2 font-sans">
                         <span className="font-semibold text-white">{item.source_name}</span>
                         <span className="block text-[10px] text-slate-500 font-mono truncate">{item.source_path}</span>
                       </div>
                       <div className="col-span-5 truncate pr-2 text-emerald-400 text-[11px]">
                         {item.dest_path}
                       </div>
-                      <div className="col-span-2 text-right">
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px]">
-                          {item.action}
+                      <div className="col-span-3 text-right">
+                        <span className="px-2 py-0.5 rounded bg-lime-950 text-lime-400 border border-lime-800/60 text-[10px] font-sans font-semibold">
+                          {item.category_tag}
                         </span>
                       </div>
                     </div>

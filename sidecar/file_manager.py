@@ -189,28 +189,57 @@ def safe_clean_trash(file_paths: List[str]) -> Dict[str, Any]:
         "blocked_files": blocked
     }
 
-# Preview / Dry-run Plan before execution (Phase 3 Spec)
-def generate_organize_preview(file_paths: List[str], target_base_dir: str) -> List[Dict[str, Any]]:
+from ai_organizer import analyze_file_intent_rule_based, analyze_with_ai_llm
+
+def generate_organize_preview(file_paths: List[str], target_base_dir: str, use_ai: bool = True) -> List[Dict[str, Any]]:
     preview_items = []
     target_base = Path(target_base_dir)
 
     for src_path in file_paths:
         src = Path(src_path)
-        if not src.is_file():
+        if not src.exists():
             continue
 
-        modality = detect_modality(src.suffix)
-        dest_folder = target_base / modality
-        dest_file = dest_folder / src.name
+        ext = src.suffix
+        name = src.name
+
+        # If it's a directory, keep directory intact
+        if src.is_dir():
+            dest_dir = target_base / "Folders_Archives"
+            dest_path = dest_dir / name
+            preview_items.append({
+                "source_name": name,
+                "source_path": str(src),
+                "dest_path": str(dest_path),
+                "is_dir": True,
+                "modality": "folder",
+                "category_tag": "Thư Mục Dự Án",
+                "size_formatted": "--",
+                "has_conflict": dest_path.exists(),
+                "action": "Chuyển toàn bộ thư mục"
+            })
+            continue
+
+        # Intelligent Domain & AI Intent Analysis
+        intent = analyze_with_ai_llm(name, ext) if use_ai else analyze_file_intent_rule_based(name, ext)
+        main_folder = intent["main_folder"]
+        sub_folder = intent["sub_folder"]
+        context_tag = intent["context_tag"]
+
+        # Structured Path: Target / MainCategory / SubCategory / File
+        dest_folder = target_base / main_folder / sub_folder
+        dest_file = dest_folder / name
 
         will_conflict = dest_file.exists()
-        action_name = "Sao chép & Đổi tên tránh trùng" if will_conflict else "Sao chép an toàn"
+        action_name = "Chuyển & Đổi tên tránh trùng" if will_conflict else "Chuyển vào cấu trúc AI"
 
         preview_items.append({
-            "source_name": src.name,
+            "source_name": name,
             "source_path": str(src),
             "dest_path": str(dest_file),
-            "modality": modality,
+            "is_dir": False,
+            "modality": detect_modality(ext),
+            "category_tag": f"{main_folder} > {sub_folder} [{context_tag}]",
             "size_formatted": format_bytes(src.stat().st_size) if src.exists() else "0 B",
             "has_conflict": will_conflict,
             "action": action_name
@@ -218,13 +247,11 @@ def generate_organize_preview(file_paths: List[str], target_base_dir: str) -> Li
 
     return preview_items
 
-# Execute Safe Organize with Checksum Verification & Undo Journal
-UNDO_JOURNAL: List[Dict[str, Any]] = []
-
+# Execute Safe Organize: Supports both files and entire folders with true MOVE
 def organize_files_safe(
     file_paths: List[str], 
     target_base_dir: str, 
-    mode: str = "copy"
+    mode: str = "move" # Default to MOVE so files/folders are actually relocated
 ) -> Dict[str, Any]:
     target_base = Path(target_base_dir)
     target_base.mkdir(parents=True, exist_ok=True)
@@ -235,36 +262,45 @@ def organize_files_safe(
 
     for src_path in file_paths:
         src = Path(src_path)
-        if not src.is_file():
+        if not src.exists():
             continue
 
-        modality = detect_modality(src.suffix)
-        dest_folder = target_base / modality
-        dest_folder.mkdir(parents=True, exist_ok=True)
+        # Handle directory move
+        if src.is_dir():
+            dest_folder = target_base / "Folders_Archives" / src.name
+            dest_folder.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                if mode == "move":
+                    shutil.move(src, dest_folder)
+                else:
+                    shutil.copytree(src, dest_folder, dirs_exist_ok=True)
+                moved.append({"from": str(src), "to": str(dest_folder), "is_dir": True})
+            except Exception as e:
+                failed.append({"path": str(src), "error": str(e)})
+            continue
 
-        dest_file = dest_folder / src.name
+        # Handle file move according to Domain & AI Structure
+        ext = src.suffix
+        intent = analyze_file_intent_rule_based(src.name, ext)
+        dest_dir = target_base / intent["main_folder"] / intent["sub_folder"]
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        dest_file = dest_dir / src.name
         counter = 1
         while dest_file.exists():
-            dest_file = dest_folder / f"{src.stem}_{counter}{src.suffix}"
+            dest_file = dest_dir / f"{src.stem}_{counter}{src.suffix}"
             counter += 1
 
         try:
-            # Step 1: calculate source checksum
             src_hash = calculate_checksum(str(src))
-
-            # Step 2: perform copy
             shutil.copy2(src, dest_file)
-
-            # Step 3: verify destination checksum
             dest_hash = calculate_checksum(str(dest_file))
             if src_hash != dest_hash:
-                # Corrupted during copy, delete destination and abort this file
                 if dest_file.exists():
                     os.remove(dest_file)
-                failed.append({"path": str(src), "error": "Lỗi toàn vẹn Checksum SHA-256 không khớp"})
+                failed.append({"path": str(src), "error": "Lỗi Checksum"})
                 continue
 
-            # If mode is move, only remove source AFTER checksum is 100% matched
             if mode == "move":
                 os.remove(src)
 
@@ -272,7 +308,7 @@ def organize_files_safe(
                 "from": str(src),
                 "to": str(dest_file),
                 "mode": mode,
-                "modality": modality,
+                "is_dir": False,
                 "checksum": src_hash,
                 "timestamp": int(time.time())
             }
@@ -281,7 +317,6 @@ def organize_files_safe(
         except Exception as e:
             failed.append({"path": str(src), "error": str(e)})
 
-    # Save to global undo journal
     if batch_journal:
         UNDO_JOURNAL.extend(batch_journal)
 

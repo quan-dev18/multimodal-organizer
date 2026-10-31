@@ -310,14 +310,13 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
 def api_trash_files(req: TrashRequest):
     return safe_clean_trash(req.file_paths)
 
-# Dry-run Preview before Organize
-@app.post("/api/files/organize_preview")
-def api_organize_preview(req: OrganizePreviewRequest):
-    return generate_organize_preview(req.file_paths, req.target_base)
-
 @app.post("/api/files/organize")
 def api_organize_files(req: OrganizeRequest):
     return organize_files_safe(req.file_paths, req.target_base, req.mode)
+
+@app.post("/api/files/organize_preview")
+def api_organize_preview(req: OrganizePreviewRequest):
+    return generate_organize_preview(req.file_paths, req.target_base, use_ai=True)
 
 # Undo Last Organize
 @app.post("/api/files/undo")
