@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    @apply bg-slate-950 text-slate-100 antialiased font-sans select-none overflow-x-hidden;
+  }
+}
+
+/* Custom segmented bar striped pattern similar to Call of Duty / Military Game HUD */
+.vram-segment-green {
+  background: repeating-linear-gradient(
+    90deg,
+    #84cc16 0px,
+    #84cc16 4px,
+    #1e293b 4px,
+    #1e293b 6px
+  );
+}
+
+.vram-segment-gray {
+  background: repeating-linear-gradient(
+    90deg,
+    #94a3b8 0px,
+    #94a3b8 4px,
+    #1e293b 4px,
+    #1e293b 6px
+  );
+}
+
+.vram-segment-red {
+  background: repeating-linear-gradient(
+    90deg,
+    #ef4444 0px,
+    #ef4444 4px,
+    #1e293b 4px,
+    #1e293b 6px
+  );
+}
