@@ -4,6 +4,7 @@ import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
 
@@ -129,6 +130,11 @@ def api_trash_files(req: TrashRequest):
 @app.post("/api/files/organize")
 def api_organize_files(req: OrganizeRequest):
     return organize_files_safe(req.file_paths, req.target_base, req.mode)
+
+# Serve built frontend assets directly via HTTP at root
+DIST_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
+if os.path.exists(DIST_DIR):
+    app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
