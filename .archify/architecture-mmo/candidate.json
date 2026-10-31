@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "MMO Desktop - Multimodal Organizer Architecture",
+    "output": "mmo-architecture.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "desktop_user", "type": "external", "label": "Người Dùng", "sublabel": "Desktop Client", "pos": [40, 280], "size": [130, 60] },
+    { "id": "pywebview", "type": "frontend", "label": "pywebview Runtime", "sublabel": "Edge WebView2", "pos": [230, 280], "size": [150, 60], "tag": "Desktop Window" },
+    { "id": "react_ui", "type": "frontend", "label": "React 19 + Vite UI", "sublabel": "Tailwind 4 / Dark HUD", "pos": [440, 280], "size": [160, 60], "tag": ":8001 Static" },
+    { "id": "fastapi_core", "type": "backend", "label": "FastAPI Core Engine", "sublabel": "Uvicorn :8001 Sidecar", "pos": [680, 280], "size": [160, 60] },
+    { "id": "hardware_mgr", "type": "backend", "label": "Hardware Monitor", "sublabel": "NVML / psutil", "pos": [680, 140], "size": [160, 60], "tag": "VRAM Gauge" },
+    { "id": "ollama_cluster", "type": "backend", "label": "Ollama Local Cluster", "sublabel": ":11434 Daemon", "pos": [920, 140], "size": [170, 60], "tag": "GTX 1650 4GB" },
+    { "id": "models_repo", "type": "database", "label": "Local SLMs Storage", "sublabel": "D:\\OllamaModels", "pos": [1160, 140], "size": [170, 60], "tag": "Multi-Modal" },
+    { "id": "file_mgr", "type": "backend", "label": "Safe File Manager", "sublabel": "SHA-256 / send2trash", "pos": [680, 420], "size": [160, 60] },
+    { "id": "undo_journal", "type": "database", "label": "Undo Journal", "sublabel": "~/.mmo_undo_journal.json", "pos": [920, 420], "size": [170, 60], "tag": "Safe Rollback" },
+    { "id": "storage_tiers", "type": "database", "label": "Multi-Tiered Vault", "sublabel": "Hot / Warm / Cold", "pos": [1160, 420], "size": [170, 60], "tag": "Organized_Vault" }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "MMO Desktop Host (Local Machine Windows 11)", "wraps": ["pywebview", "react_ui", "fastapi_core", "hardware_mgr", "ollama_cluster", "models_repo", "file_mgr", "undo_journal", "storage_tiers"] },
+    { "kind": "security-group", "label": "Local AI Inference Layer (On-Premise GPU)", "wraps": ["hardware_mgr", "ollama_cluster", "models_repo"] },
+    { "kind": "security-group", "label": "Safe Data & Storage Governance Layer", "wraps": ["file_mgr", "undo_journal", "storage_tiers"] }
+  ],
+  "connections": [
+    { "id": "c1", "from": "desktop_user", "to": "pywebview", "label": "Tương tác", "variant": "emphasis" },
+    { "id": "c2", "from": "pywebview", "to": "react_ui", "label": "Render WebView" },
+    { "id": "c3", "from": "react_ui", "to": "fastapi_core", "label": "REST & Streaming API" },
+    { "id": "c4", "from": "fastapi_core", "to": "hardware_mgr", "label": "Đo NVML VRAM" },
+    { "id": "c5", "from": "hardware_mgr", "to": "ollama_cluster", "label": "Điều phối tải VRAM" },
+    { "id": "c6", "from": "ollama_cluster", "to": "models_repo", "label": "Load Qwen/Moondream" },
+    { "id": "c7", "from": "fastapi_core", "to": "file_mgr", "label": "Duyệt / Quét sâu / Sắp xếp" },
+    { "id": "c8", "from": "file_mgr", "to": "undo_journal", "label": "Ghi nhận Checksum & Undo" },
+    { "id": "c9", "from": "file_mgr", "to": "storage_tiers", "label": "True Move & Phân Tầng" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Local AI Engine", "items": ["Cụm Small Language Models & Vision chạy 100% cục bộ trên GTX 1650 (4GB VRAM)", "Tự động phân bổ bộ nhớ sang RAM khi cần, không rò rỉ dữ liệu"] },
+    { "dot": "cyan", "title": "Bảo Vệ Dữ Liệu Tuyệt Đối", "items": ["Toàn bộ thao tác xóa đi qua Windows Recycle Bin (send2trash)", "Kiểm tra toàn vẹn mã băm SHA-256 trước khi di dời tệp và hỗ trợ Hoàn Tác 1-click"] },
+    { "dot": "amber", "title": "Lưu Trữ Đa Tầng (Hot/Warm/Cold)", "items": ["Phân loại theo tần suất và ngữ cảnh: Game Dev, Lập trình, Văn phòng, Đồ họa", "Tiết kiệm hơn 60% chi phí lưu trữ theo phương pháp kiến trúc NCKH"] }
+  ]
+}
