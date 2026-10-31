@@ -4,17 +4,28 @@ import { MultiModelSelector } from './components/preflight/MultiModelSelector';
 import type { ModelItem, ModelCluster, BatchDownloadStatus } from './components/preflight/MultiModelSelector';
 import { BenchmarkCard } from './components/preflight/BenchmarkCard';
 import { MainApp } from './components/main/MainApp';
-import { ArrowRight, RefreshCw } from 'lucide-react';
+import { ArrowRight, RefreshCw, CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+import { ThemeAndLangControls } from './lib/ThemeAndLangControls';
+import { useApp } from './lib/AppContext';
+import { sfx } from './lib/sounds';
 
 const API_BASE = "http://127.0.0.1:8001/api";
 
+interface ToastNotification {
+  id: string;
+  type: 'success' | 'error' | 'info';
+  message: string;
+}
+
 export function App() {
+  const { t } = useApp();
   const [isInPreflight, setIsInPreflight] = useState<boolean>(true);
   const [hardware, setHardware] = useState<any>(null);
   const [ollamaStatus, setOllamaStatus] = useState<any>(null);
   const [clusters, setClusters] = useState<ModelCluster[]>([]);
   const [flatCatalog, setFlatCatalog] = useState<ModelItem[]>([]);
   const [storagePath, setStoragePath] = useState<string>("D:\\OllamaModels");
+  const [toasts, setToasts] = useState<ToastNotification[]>([]);
   
   // Selected models
   const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(
@@ -36,6 +47,20 @@ export function App() {
 
   const [loadingHardware, setLoadingHardware] = useState(true);
 
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts(prev => [...prev, { id, type, message }]);
+    if (type === 'success') sfx.success();
+    else if (type === 'error') sfx.error();
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 4000);
+  };
+
+  const removeToast = (id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
   // Fetch Hardware & Clusters
   const refreshSystemInfo = async () => {
     setLoadingHardware(true);
@@ -49,7 +74,22 @@ export function App() {
       ]);
 
       if (hwRes) setHardware(hwRes);
-      if (ollamaRes) setOllamaStatus(ollamaRes);
+      if (ollamaRes) {
+        setOllamaStatus(ollamaRes);
+        // Sync active selection with actually installed models if available
+        if (ollamaRes.models && ollamaRes.models.length > 0) {
+          const installedTags: string[] = ollamaRes.models.map((m: any) => m.name);
+          setSelectedModelIds(prev => {
+            const matched = new Set<string>();
+            catRes?.forEach((c: ModelItem) => {
+              if (installedTags.some(t => t.includes(c.tag) || c.tag.includes(t))) {
+                matched.add(c.id);
+              }
+            });
+            return matched.size > 0 ? matched : prev;
+          });
+        }
+      }
       if (clusRes && clusRes.length > 0) setClusters(clusRes);
       if (catRes && catRes.length > 0) setFlatCatalog(catRes);
       if (pathRes && pathRes.current_path) setStoragePath(pathRes.current_path);
@@ -67,6 +107,7 @@ export function App() {
   }, []);
 
   const handleToggleModel = (m: ModelItem) => {
+    sfx.toggle();
     const next = new Set(selectedModelIds);
     if (next.has(m.id)) {
       if (next.size > 1) next.delete(m.id);
@@ -78,6 +119,7 @@ export function App() {
 
   // Open native Windows folder selector dialog
   const handleOpenFolderPicker = async () => {
+    sfx.click();
     try {
       const res = await fetch(`${API_BASE}/system/select_folder`, { method: 'POST' });
       const data = await res.json();
@@ -90,11 +132,11 @@ export function App() {
         });
         await updateRes.json();
         setStoragePath(data.path);
-        alert(`Đã chọn thư mục cài đặt mô hình: ${data.path}`);
+        showToast(`Đã chọn thư mục lưu trữ: ${data.path}`, 'success');
         await refreshSystemInfo();
       }
     } catch (e: any) {
-      alert(`Lỗi chọn thư mục: ${e.message}`);
+      showToast(`Lỗi chọn thư mục: ${e.message}`, 'error');
     }
   };
 
@@ -153,13 +195,14 @@ export function App() {
 
   // Batch Download all uninstalled models sequentially
   const handleDownloadAllSelected = async () => {
+    sfx.click();
     const installedList: string[] = ollamaStatus?.models?.map((m: any) => m.name) || [];
     const modelsToDownload = flatCatalog.filter(
       m => selectedModelIds.has(m.id) && !installedList.some(tag => tag.includes(m.tag) || m.tag.includes(tag))
     );
 
     if (modelsToDownload.length === 0) {
-      alert("Tất cả các mô hình bạn chọn đều đã được tải về sẵn!");
+      showToast("Tất cả các mô hình đã chọn đều đã được tải về sẵn.", 'info');
       return;
     }
 
@@ -205,10 +248,11 @@ export function App() {
         });
       }
 
-      alert("Đã hoàn tất tải tất cả các mô hình thành công!");
+      sfx.complete();
+      showToast("Đã tải xong toàn bộ mô hình được chọn!", 'success');
       await refreshSystemInfo();
     } catch (err: any) {
-      alert(`Lỗi trong quá trình tải: ${err.message}`);
+      showToast(`Lỗi trong quá trình tải: ${err.message}`, 'error');
     } finally {
       clearInterval(timerInterval);
       setBatchStatus(prev => ({ ...prev, isDownloading: false }));
@@ -217,6 +261,7 @@ export function App() {
 
   // Download single model
   const handleDownloadSingleModel = async (modelTag: string) => {
+    sfx.click();
     setBatchStatus({
       isDownloading: true,
       currentModelTag: modelTag,
@@ -239,9 +284,11 @@ export function App() {
           estimatedSecondsLeft: estLeft > 0 ? estLeft : prev.estimatedSecondsLeft
         }));
       });
+      sfx.success();
+      showToast(`Đã tải mô hình ${modelTag} thành công`, 'success');
       await refreshSystemInfo();
     } catch (err: any) {
-      alert(`Lỗi tải: ${err.message}`);
+      showToast(`Lỗi tải: ${err.message}`, 'error');
     } finally {
       setBatchStatus(prev => ({ ...prev, isDownloading: false }));
     }
@@ -249,6 +296,7 @@ export function App() {
 
   // Delete model
   const handleDeleteModel = async (modelTag: string) => {
+    sfx.delete();
     try {
       const res = await fetch(`${API_BASE}/models/delete`, {
         method: 'POST',
@@ -256,15 +304,16 @@ export function App() {
         body: JSON.stringify({ model_name: modelTag })
       });
       const data = await res.json();
-      alert(data.message);
+      showToast(data.message || `Đã xoá ${modelTag}`, 'info');
       await refreshSystemInfo();
     } catch (e: any) {
-      alert(`Lỗi khi xóa: ${e.message}`);
+      showToast(`Lỗi khi xóa: ${e.message}`, 'error');
     }
   };
 
   // Run Benchmark
   const handleRunBenchmark = async (modelTag: string) => {
+    sfx.scan();
     const res = await fetch(`${API_BASE}/models/benchmark`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -287,65 +336,134 @@ export function App() {
   if (!isInPreflight) {
     return (
       <MainApp
-        onBackToPreflight={() => setIsInPreflight(true)}
+        onBackToPreflight={() => {
+          sfx.navigate();
+          setIsInPreflight(true);
+        }}
         activeModelNames={selectedModelsList.map(m => m.name)}
       />
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-6 max-w-7xl mx-auto">
-      {/* Top Header */}
-      <header className="flex items-center justify-between pb-4 border-b border-slate-800 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-lime-500 to-emerald-600 flex items-center justify-center font-black text-slate-950 text-2xl shadow-lg shadow-lime-950/50">
-            M
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col justify-between p-6 max-w-6xl mx-auto font-sans antialiased">
+      {/* Toast notifications */}
+      <div className="fixed top-5 right-5 z-50 flex flex-col gap-2 max-w-md pointer-events-none">
+        {toasts.map(toast => (
+          <div
+            key={toast.id}
+            className={`pointer-events-auto flex items-center justify-between gap-3 px-4 py-3 rounded-xl border shadow-xl backdrop-blur-md transition-all duration-200 text-xs ${
+              toast.type === 'success'
+                ? 'bg-emerald-950/80 border-emerald-800 text-emerald-200'
+                : toast.type === 'error'
+                ? 'bg-rose-950/80 border-rose-800 text-rose-200'
+                : 'bg-zinc-900/90 border-zinc-700 text-zinc-200'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {toast.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
+              {toast.type === 'error' && <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />}
+              {toast.type === 'info' && <Info className="w-4 h-4 text-indigo-400 shrink-0" />}
+              <span>{toast.message}</span>
+            </div>
+            <button
+              onClick={() => removeToast(toast.id)}
+              className="text-zinc-400 hover:text-zinc-200 p-0.5 rounded transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
+        ))}
+      </div>
+
+      {/* Top Header */}
+      <header className="flex items-center justify-between pb-5 border-b border-zinc-800/80 shrink-0">
+        <div className="flex items-center gap-3.5">
+          <img 
+            src="./mmo_app_icon.png" 
+            alt="MMO App Icon" 
+            className="w-10 h-10 rounded-xl object-contain bg-zinc-900 border border-zinc-800 p-1 shadow-sm"
+          />
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="font-bold text-lg text-white tracking-wide">MMO — ĐA MÔ HÌNH (MULTI-MODEL AI ORGANIZER)</h1>
-              <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">PHASE 2 - 3</span>
+              <h1 className="font-semibold text-base text-zinc-100">{t('setup_title')}</h1>
+              <span className="px-2 py-0.5 rounded-full text-xs bg-zinc-800/80 text-zinc-400 border border-zinc-700/60 font-mono">
+                {t('setup_badge')}
+              </span>
             </div>
-            <p className="text-xs text-slate-400">
-              Chọn thư mục cài đặt mô hình qua cửa sổ Windows, theo dõi thanh VRAM cố định & tải tự động tuần tự
+            <p className="text-xs text-zinc-400 mt-0.5">
+              {t('setup_desc')}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
+          <ThemeAndLangControls />
+
           <button
-            onClick={refreshSystemInfo}
+            onClick={() => {
+              sfx.click();
+              refreshSystemInfo();
+            }}
             disabled={loadingHardware}
-            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg text-xs flex items-center gap-1.5 border border-slate-800 transition-colors"
+            className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800/80 text-zinc-300 rounded-lg text-xs flex items-center gap-1.5 border border-zinc-800 transition-colors"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loadingHardware ? 'animate-spin text-lime-400' : ''}`} />
-            Làm mới phần cứng
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingHardware ? 'animate-spin text-indigo-400' : ''}`} />
+            {t('refresh')}
           </button>
 
           <button
-            onClick={() => setIsInPreflight(false)}
-            className="px-5 py-2 bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-2 transition-all shadow-lg shadow-lime-950/40"
+            onClick={() => {
+              // 1. Validation check: Must select at least 1 model
+              if (selectedModelsList.length === 0) {
+                sfx.error();
+                showToast("Vui lòng chọn ít nhất 1 mô hình AI trước khi bắt đầu sử dụng!", "error");
+                return;
+              }
+
+              // 2. Validation check: Selected models must actually be downloaded in Ollama
+              const uninstalledSelected = selectedModelsList.filter(
+                m => !installedModelsList.some(tag => tag.includes(m.tag) || m.tag.includes(tag))
+              );
+              if (uninstalledSelected.length > 0) {
+                sfx.error();
+                showToast(`Mô hình [${uninstalledSelected.map(m => m.name).join(', ')}] chưa được tải về! Hãy bấm 'Tải về' trước khi mở ứng dụng.`, "error");
+                return;
+              }
+
+              // 3. Validation check: VRAM overflow prevention
+              const totalEstVram = usedVramOther + totalModelVram;
+              if (totalEstVram > totalVram) {
+                sfx.error();
+                showToast(`Cảnh báo tràn bộ nhớ: Tổng dung lượng VRAM dự kiến (${totalEstVram.toFixed(1)} GB) vượt quá dung lượng card đồ họa (${totalVram.toFixed(1)} GB)! Vui lòng bỏ chọn bớt mô hình.`, "error");
+                return;
+              }
+
+              sfx.navigate();
+              setIsInPreflight(false);
+            }}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg text-xs flex items-center gap-2 transition-all shadow-md shadow-indigo-950/40 cursor-pointer"
           >
-            Vào Không Gian Lưu Trữ
-            <ArrowRight className="w-4 h-4" />
+            {t('start_app')}
+            <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
       </header>
 
       {/* Main Content Area */}
       <main className="space-y-6 my-6">
-        {/* 1. STICKY VRAM GAUGE BAR: Luôn ghim cố định trên màn hình để quan sát khi chọn model */}
-        <div className="sticky top-4 z-40 shadow-2xl">
+        {/* 1. STICKY VRAM GAUGE BAR */}
+        <div className="sticky top-4 z-40 shadow-xl">
           <VramGauge
             totalVramGb={totalVram}
             usedVramOtherGb={usedVramOther}
             modelVramGb={totalModelVram}
-            appName={`Cụm ${selectedModelIds.size} Mô Hình MMO`}
+            appName={`Cụm ${selectedModelIds.size} mô hình đã chọn`}
             gpuName={gpuName}
           />
         </div>
 
-        {/* 2. Multi-Model Cluster Selection with Native Folder Picker & Download All */}
+        {/* 2. Multi-Model Cluster Selection */}
         <section>
           <MultiModelSelector
             clusters={clusters}
@@ -372,14 +490,14 @@ export function App() {
       </main>
 
       {/* Footer System Specs */}
-      <footer className="pt-4 border-t border-slate-900 flex items-center justify-between text-[11px] text-slate-500 font-mono">
+      <footer className="pt-4 border-t border-zinc-900 flex items-center justify-between text-xs text-zinc-400 font-sans">
         <div className="flex items-center gap-4">
-          <span>GPU: <b className="text-slate-400 font-sans">{gpuName}</b> ({totalVram} GB)</span>
-          <span>RAM: <b className="text-slate-400 font-sans">{hardware?.ram?.total_gb || 16} GB</b> (Trống: {hardware?.ram?.free_gb || 6} GB)</span>
-          <span>CPU: <b className="text-slate-400 font-sans">{hardware?.cpu?.logical_cores || 8} Luồng</b></span>
+          <span>GPU: <span className="text-zinc-300 font-medium">{gpuName}</span> ({totalVram} GB)</span>
+          <span>RAM: <span className="text-zinc-300 font-medium">{hardware?.ram?.total_gb || 16} GB</span> (Trống: {hardware?.ram?.free_gb || 6} GB)</span>
+          <span>CPU: <span className="text-zinc-300 font-medium">{hardware?.cpu?.logical_cores || 8} luồng</span></span>
         </div>
-        <div className="text-slate-600">
-          MMO Multimodal Organizer v1.4 · Sticky VRAM & Sequential Batch Download
+        <div className="text-zinc-400 text-xs">
+          MMO Desktop · Trải nghiệm mượt mà, tối ưu phần cứng cục bộ
         </div>
       </footer>
     </div>

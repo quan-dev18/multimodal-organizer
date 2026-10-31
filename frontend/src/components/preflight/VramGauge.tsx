@@ -1,4 +1,5 @@
 import React from 'react';
+import { Cpu, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 interface VramGaugeProps {
   totalVramGb: number;
@@ -12,11 +13,11 @@ export const VramGauge: React.FC<VramGaugeProps> = ({
   totalVramGb = 4.0,
   usedVramOtherGb = 1.3,
   modelVramGb = 1.6,
-  appName = "MMO LOCAL AI",
+  appName = "Mô hình đã chọn",
   gpuName = "NVIDIA GeForce GTX 1650"
 }) => {
   const total = Math.max(totalVramGb, 0.1);
-  const targetThresholdGb = total * 0.82; // 82% threshold target
+  const targetThresholdGb = total * 0.85; // 85% an toàn
   const targetPercent = (targetThresholdGb / total) * 100;
 
   const currentTotalUsedGb = usedVramOtherGb + modelVramGb;
@@ -26,88 +27,95 @@ export const VramGauge: React.FC<VramGaugeProps> = ({
   // Calculate widths in percentage
   const modelPercent = Math.min((modelVramGb / total) * 100, 100);
   const otherPercent = Math.min((usedVramOtherGb / total) * 100, 100 - modelPercent);
+  const totalPercent = Math.min((currentTotalUsedGb / total) * 100, 100);
 
   return (
-    <div className="w-full bg-slate-900/90 border border-slate-800 rounded-xl p-5 shadow-2xl backdrop-blur-md">
+    <div className="w-full bg-zinc-900/90 border border-zinc-800 rounded-xl p-4 shadow-xl backdrop-blur-md transition-all">
       {/* Title & Target header */}
-      <div className="flex items-center justify-between text-xs tracking-widest text-slate-400 font-mono font-bold uppercase mb-2">
+      <div className="flex items-center justify-between text-xs text-zinc-400 mb-2.5">
         <div className="flex items-center gap-2">
-          <span className="inline-block w-2 h-2 rounded-full bg-lime-400 animate-pulse"></span>
-          <span>DUNG LƯỢNG VRAM ƯỚC TÍNH:</span>
-          <span className="text-slate-500 font-normal">({gpuName})</span>
+          <Cpu className="w-4 h-4 text-indigo-400" />
+          <span className="font-medium text-zinc-200">Bộ nhớ đồ họa (VRAM):</span>
+          <span className="text-zinc-400">{gpuName}</span>
         </div>
-        <div className="flex items-center gap-2 pr-6">
-          <span>TARGET (AN TOÀN):</span>
-          <span className="text-slate-300 font-mono">{targetThresholdGb.toFixed(2)} GB</span>
+        <div className="flex items-center gap-2 text-zinc-400">
+          <span>Ngưỡng đề xuất:</span>
+          <span className="text-zinc-300 font-mono font-medium">{targetThresholdGb.toFixed(1)} GB</span>
         </div>
       </div>
 
-      {/* Main Gauge Container with Game HUD style */}
-      <div className="relative w-full h-8 bg-slate-950/80 border border-slate-700/60 rounded px-1 flex items-center overflow-hidden">
-        {/* Model segment (Green/Lime striped) */}
+      {/* Main Gauge Progress Bar */}
+      <div className="relative w-full h-6 bg-zinc-950 rounded-lg p-0.5 flex items-center overflow-hidden border border-zinc-800/80">
+        {/* Model segment */}
         <div
-          className={`h-6 rounded-l transition-all duration-500 ${isOverVram ? 'vram-segment-red' : 'vram-segment-green'}`}
+          className={`h-full rounded-l transition-all duration-300 ${
+            isOverVram ? 'bg-rose-500' : 'bg-indigo-500'
+          }`}
           style={{ width: `${modelPercent}%` }}
-          title={`MMO Model: ${modelVramGb.toFixed(2)} GB`}
+          title={`${appName}: ${modelVramGb.toFixed(2)} GB`}
         />
 
-        {/* Other apps segment (White/Gray striped) */}
+        {/* Other apps segment */}
         <div
-          className="h-6 transition-all duration-500 vram-segment-gray"
+          className="h-full bg-zinc-700/80 transition-all duration-300"
           style={{ width: `${otherPercent}%` }}
           title={`Ứng dụng khác: ${usedVramOtherGb.toFixed(2)} GB`}
         />
 
         {/* Target Vertical Marker */}
         <div
-          className="absolute top-0 bottom-0 w-0.5 bg-amber-400/80 z-20 flex flex-col items-center justify-between"
+          className="absolute top-0 bottom-0 w-0.5 bg-amber-400/90 z-20 flex flex-col items-center justify-between"
           style={{ left: `${targetPercent}%` }}
+          title={`Ngưỡng an toàn (${targetPercent.toFixed(0)}%)`}
         >
-          <div className="w-2 h-1 bg-amber-400 -mt-0.5"></div>
-          <div className="w-2 h-1 bg-amber-400 -mb-0.5"></div>
+          <div className="w-1.5 h-1 bg-amber-400 rounded-b-sm" />
+          <div className="w-1.5 h-1 bg-amber-400 rounded-t-sm" />
         </div>
       </div>
 
-      {/* Footer Metrics similar to game screenshot */}
-      <div className="mt-3 flex items-center justify-between text-xs font-mono font-semibold tracking-wide">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 text-lime-400">
-            <span className="font-bold">III</span>
-            <span className="uppercase">{appName}:</span>
-            <span className="text-white text-sm">{modelVramGb.toFixed(2)} GB</span>
+      {/* Footer Metrics */}
+      <div className="mt-3 flex items-center justify-between text-xs">
+        <div className="flex items-center gap-5">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm bg-indigo-500 shrink-0" />
+            <span className="text-zinc-400">{appName}:</span>
+            <span className="text-zinc-200 font-mono font-medium">{modelVramGb.toFixed(2)} GB</span>
           </div>
 
-          <div className="flex items-center gap-2 text-slate-400">
-            <span className="font-bold">III</span>
-            <span className="uppercase">ỨNG DỤNG KHÁC:</span>
-            <span className="text-slate-200 text-sm">{usedVramOtherGb.toFixed(2)} GB</span>
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm bg-zinc-700 shrink-0" />
+            <span className="text-zinc-400">Hệ thống & ứng dụng khác:</span>
+            <span className="text-zinc-300 font-mono font-medium">{usedVramOtherGb.toFixed(2)} GB</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-slate-400">TỔNG:</span>
-          <span className={`text-sm font-bold ${isOverVram ? 'text-red-400' : isNearTarget ? 'text-amber-400' : 'text-slate-100'}`}>
-            {currentTotalUsedGb.toFixed(2)} / {total.toFixed(2)} GB
+        <div className="flex items-center gap-1.5">
+          <span className="text-zinc-400">Tổng cộng:</span>
+          <span className={`font-mono font-semibold ${
+            isOverVram ? 'text-rose-400' : isNearTarget ? 'text-amber-400' : 'text-zinc-100'
+          }`}>
+            {currentTotalUsedGb.toFixed(2)} / {total.toFixed(1)} GB
           </span>
+          <span className="text-zinc-400 text-xs">({totalPercent.toFixed(0)}%)</span>
         </div>
       </div>
 
       {/* Advisory Status Alert */}
-      <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
+      <div className="mt-3 pt-2.5 border-t border-zinc-800/60 flex items-center justify-between text-xs">
         {isOverVram ? (
-          <div className="text-red-400 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-red-500"></span>
-            <span>⚠️ Cảnh báo: Vượt quá dung lượng 4GB VRAM! Ollama sẽ tràn tải sang RAM, tốc độ phản hồi có thể bị chậm.</span>
+          <div className="text-rose-400 flex items-center gap-1.5">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>Vượt quá dung lượng VRAM thực tế. Một phần mô hình sẽ tràn vào RAM hệ thống, có thể làm giảm tốc độ suy luận.</span>
           </div>
         ) : isNearTarget ? (
-          <div className="text-amber-400 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-            <span>Gần ngưỡng giới hạn Target! Mô hình hoạt động ổn định nhưng nên tắt bớt tác vụ đồ họa khác.</span>
+          <div className="text-amber-400 flex items-center gap-1.5">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>Mức dùng gần ngưỡng dung lượng khuyến nghị. Khuyên bạn nên đóng bớt các ứng dụng đồ họa nặng khác.</span>
           </div>
         ) : (
-          <div className="text-emerald-400 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-            <span>Trạng thái Tối Ưu: Mô hình nằm trọn 100% trong VRAM (GTX 1650). Tốc độ xử lý tối đa, cực kỳ mượt mà!</span>
+          <div className="text-emerald-400 flex items-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>Phù hợp hoàn hảo. Toàn bộ trọng số mô hình được nạp trực tiếp vào VRAM card đồ họa cho tốc độ phản hồi nhanh nhất.</span>
           </div>
         )}
       </div>

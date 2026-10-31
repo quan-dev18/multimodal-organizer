@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Đang khởi tạo MMO Desktop</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #09090b;
+      color: #f4f4f5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      user-select: none;
+      overflow: hidden;
+    }
+    .splash-card {
+      width: 440px;
+      background: rgba(24, 24, 27, 0.85);
+      border: 1px solid rgba(63, 63, 70, 0.4);
+      border-radius: 20px;
+      padding: 36px 32px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(12px);
+    }
+    .logo-img {
+      width: 72px;
+      height: 72px;
+      border-radius: 16px;
+      margin-bottom: 20px;
+      background: #18181b;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      padding: 6px;
+      box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.3);
+    }
+    h2 { font-size: 18px; font-weight: 600; color: #f8fafc; margin-bottom: 6px; }
+    p.desc { font-size: 12px; color: #94a3b8; margin-bottom: 28px; text-align: center; }
+    .progress-container {
+      width: 100%;
+      height: 6px;
+      background: rgba(39, 39, 42, 0.9);
+      border-radius: 9999px;
+      overflow: hidden;
+      margin-bottom: 14px;
+      border: 1px solid rgba(63, 63, 70, 0.5);
+    }
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #6366f1, #a855f7, #6366f1);
+      background-size: 200% 100%;
+      border-radius: 9999px;
+      transition: width 0.3s ease-out;
+      animation: shimmer 1.5s infinite linear;
+    }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    .status-text {
+      font-size: 11px;
+      color: #cbd5e1;
+      font-family: monospace;
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+    }
+  </style>
+</head>
+<body>
+  <div class="splash-card">
+    <img src="mmo_app_icon.png" class="logo-img" alt="MMO Logo" onerror="this.style.display='none'">
+    <h2>MMO Desktop</h2>
+    <p class="desc">Đang nạp kiến trúc tổ chức tệp tin đa phương thức & AI Engine...</p>
+
+    <div class="progress-container">
+      <div id="pBar" class="progress-bar"></div>
+    </div>
+
+    <div class="status-text">
+      <span id="pStatus">Đang kiểm tra kết nối...</span>
+      <span id="pPercent" style="color: #818cf8; font-weight: bold;">0%</span>
+    </div>
+  </div>
+
+  <script>
+    const pBar = document.getElementById('pBar');
+    const pStatus = document.getElementById('pStatus');
+    const pPercent = document.getElementById('pPercent');
+
+    let currentProgress = 5;
+    const stages = [
+      { at: 20, text: 'Đang kết nối Ollama AI Engine...' },
+      { at: 50, text: 'Đang khởi chạy dịch vụ FastAPI Sidecar...' },
+      { at: 75, text: 'Đang chuẩn bị không gian làm việc...' },
+      { at: 90, text: 'Sắp hoàn tất tải giao diện...' }
+    ];
+
+    const timer = setInterval(() => {
+      if (currentProgress < 90) {
+        currentProgress += Math.floor(Math.random() * 8) + 3;
+        if (currentProgress > 90) currentProgress = 90;
+        pBar.style.width = currentProgress + '%';
+        pPercent.innerText = currentProgress + '%';
+        const st = stages.find(s => currentProgress <= s.at);
+        if (st) pStatus.innerText = st.text;
+      }
+
+      // Check if backend 8001 is ready
+      fetch('http://127.0.0.1:8001/api/health')
+        .then(res => {
+          if (res.ok) {
+            clearInterval(timer);
+            pBar.style.width = '100%';
+            pPercent.innerText = '100%';
+            pStatus.innerText = 'Kết nối thành công! Đang mở ứng dụng...';
+            setTimeout(() => {
+              window.location.href = 'http://127.0.0.1:8001';
+            }, 500);
+          }
+        })
+        .catch(() => {});
+    }, 400);
+  </script>
+</body>
+</html>

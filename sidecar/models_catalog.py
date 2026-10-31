@@ -1,13 +1,15 @@
 from typing import List, Dict, Any
 
-# Curated catalog grouped by Clusters / Modalities in MMO Research Architecture
-# L3 AI Understanding: Cascade Multi-model System
+from typing import List, Dict, Any
+
+# Curated catalog grouped by Clusters / Modalities in MMO Desktop Architecture
+# AI Model Clusters for Desktop Intelligent Organization
 MODEL_CLUSTERS: List[Dict[str, Any]] = [
     {
         "cluster_id": "text_slm",
-        "cluster_name": "Cụm 1: Text & Metadata Extraction (Văn bản & Trích xuất)",
-        "role": "L3.1 Ingestion Classifier & NER",
-        "description": "Chuyên đọc lướt nội dung, trích xuất thực thể, metadata ngày tháng, tiêu đề và phân loại nhãn tài liệu.",
+        "cluster_name": "Cụm 1: Văn bản & Trích xuất Metadata",
+        "role": "Trợ lý Phân loại & Rút trích Thực thể (NER)",
+        "description": "Đọc nội dung văn bản, tự động trích xuất metadata ngày tháng, tóm tắt và phân loại tài liệu vào danh mục chuẩn.",
         "models": [
             {
                 "id": "qwen2.5:1.5b",
@@ -17,9 +19,9 @@ MODEL_CLUSTERS: List[Dict[str, Any]] = [
                 "size_download_gb": 1.0,
                 "est_vram_gb": 1.6,
                 "category": "Text & Metadata",
-                "badge": "Khuyên dùng (4GB VRAM)",
+                "badge": "Khuyên Dùng",
                 "modality_support": ["text", "json", "code"],
-                "description": "Siêu nhanh, trích xuất metadata JSON, nhận diện nhãn cực chuẩn. Đạt ~45 tok/s trên GTX 1650.",
+                "description": "Siêu nhanh, trích xuất metadata JSON, nhận diện nhãn cực chuẩn. Đạt ~45 tok/s trên card đồ họa phổ thông.",
                 "default_selected": True
             },
             {
@@ -30,7 +32,7 @@ MODEL_CLUSTERS: List[Dict[str, Any]] = [
                 "size_download_gb": 0.8,
                 "est_vram_gb": 1.2,
                 "category": "Text & Metadata",
-                "badge": "Siêu nhẹ",
+                "badge": "Siêu Nhẹ",
                 "modality_support": ["text"],
                 "description": "Cực nhẹ, ngốn ít VRAM nhất, dùng cho quét nhanh số lượng lớn file mà không chiếm tài nguyên máy.",
                 "default_selected": False
@@ -45,7 +47,7 @@ MODEL_CLUSTERS: List[Dict[str, Any]] = [
                 "category": "Text & Reasoning",
                 "badge": "Google DeepMind",
                 "modality_support": ["text"],
-                "description": "Khả năng tóm tắt tài liệu học thuật và phân tích cấu trúc câu rất tốt.",
+                "description": "Khả năng tóm tắt tài liệu văn phòng, tài liệu kỹ thuật và cấu trúc câu rất tốt.",
                 "default_selected": False
             },
             {
@@ -56,18 +58,18 @@ MODEL_CLUSTERS: List[Dict[str, Any]] = [
                 "size_download_gb": 2.0,
                 "est_vram_gb": 2.8,
                 "category": "Text & Reasoning",
-                "badge": "Chính xác cao",
+                "badge": "Độ Chính Xác Cao",
                 "modality_support": ["text"],
-                "description": "Hiểu ngữ nghĩa sâu, suy luận trích xuất quy tắc phân loại tài liệu phức tạp.",
+                "description": "Hiểu ngữ nghĩa sâu, suy luận và xử lý quy tắc phân loại tài liệu phức tạp.",
                 "default_selected": False
             }
         ]
     },
     {
         "cluster_id": "vision_multimodal",
-        "cluster_name": "Cụm 2: Multimodal Vision & OCR (Thị giác & Hình ảnh)",
-        "role": "L3.2 Visual Content Understanding",
-        "description": "Chuyên phân tích hình ảnh, đọc văn bản trong ảnh (OCR), nhận diện biểu đồ, ảnh chụp hóa đơn.",
+        "cluster_name": "Cụm 2: Thị giác Máy tính & Đọc Ảnh (Vision OCR)",
+        "role": "Mô tả Ảnh & Nhận diện Ký tự OCR",
+        "description": "Chuyên phân tích hình ảnh, đọc chữ trong ảnh chụp/biểu đồ/hóa đơn và lập nhãn nội dung trực quan.",
         "models": [
             {
                 "id": "moondream",
@@ -77,9 +79,9 @@ MODEL_CLUSTERS: List[Dict[str, Any]] = [
                 "size_download_gb": 1.7,
                 "est_vram_gb": 2.2,
                 "category": "Multimodal Image",
-                "badge": "Tối ưu Vision 4GB",
+                "badge": "Tối Ưu Vision",
                 "modality_support": ["image", "ocr"],
-                "description": "Mô hình thị giác gọn nhẹ nhất, mô tả ảnh chi tiết và đọc chữ trong ảnh không bị tràn VRAM.",
+                "description": "Mô hình thị giác gọn nhẹ nhất, mô tả chi tiết ảnh và đọc chữ không lo tràn bộ nhớ VRAM.",
                 "default_selected": True
             },
             {
@@ -90,30 +92,30 @@ MODEL_CLUSTERS: List[Dict[str, Any]] = [
                 "size_download_gb": 4.5,
                 "est_vram_gb": 5.5,
                 "category": "High Quality Vision",
-                "badge": "Offload RAM",
+                "badge": "Chất Lượng Cao",
                 "modality_support": ["image", "chart", "diagram"],
-                "description": "Mô hình thị giác mạnh mẽ nhưng vượt quá 4GB VRAM, sẽ chia sẻ tải sang 16GB RAM hệ thống.",
+                "description": "Mô hình thị giác chi tiết cao, hỗ trợ phân tích biểu đồ và sơ đồ kỹ thuật phức tạp.",
                 "default_selected": False
             }
         ]
     },
     {
         "cluster_id": "embedding_search",
-        "cluster_name": "Cụm 3: Cross-Modal & Vector Embeddings (Truy xuất & Nhúng)",
-        "role": "L4 & L7 LanceDB Semantic Retrieval",
-        "description": "Chuyên mã hoá nội dung văn bản và ảnh thành vector 1024-chiều để phục vụ tìm kiếm ngữ nghĩa.",
+        "cluster_name": "Cụm 3: Mô hình Vector Embeddings (Tìm kiếm Ngữ nghĩa)",
+        "role": "Vector Engine & Truy xuất Ngữ nghĩa Thông minh",
+        "description": "Mã hóa nội dung văn bản và mô tả tệp thành vector đa chiều, cho phép tìm kiếm chính xác theo ý nghĩa và ngữ cảnh.",
         "models": [
             {
                 "id": "bge-m3",
-                "name": "BGE-M3 (Multi-lingual & Multi-granularity)",
+                "name": "BGE-M3 (Multi-lingual SOTA)",
                 "tag": "bge-m3",
                 "params": "0.5B",
                 "size_download_gb": 0.6,
                 "est_vram_gb": 0.8,
                 "category": "Vector Embedding",
-                "badge": "Chuẩn Đề Tài L7",
+                "badge": "Đa Ngôn Ngữ SOTA",
                 "modality_support": ["text", "code", "table"],
-                "description": "Mô hình nhúng đa ngôn ngữ hỗ trợ tiếng Việt xuất sắc, dùng lưu trữ vector vào LanceDB.",
+                "description": "Mô hình nhúng đa ngôn ngữ hỗ trợ tiếng Việt xuất sắc, dùng lưu trữ vector ngữ nghĩa chính xác.",
                 "default_selected": True
             },
             {
@@ -124,30 +126,9 @@ MODEL_CLUSTERS: List[Dict[str, Any]] = [
                 "size_download_gb": 0.3,
                 "est_vram_gb": 0.5,
                 "category": "Vector Embedding",
-                "badge": "Siêu nhẹ (0.5GB)",
+                "badge": "Siêu Gọn (0.3GB)",
                 "modality_support": ["text"],
-                "description": "Context dài 8192 tokens, cực kỳ nhẹ nhàng cho việc đánh chỉ mục nhanh.",
-                "default_selected": False
-            }
-        ]
-    },
-    {
-        "cluster_id": "audio_speech",
-        "cluster_name": "Cụm 4: Audio & Speech Understanding (Âm thanh & Lời nói)",
-        "role": "L3.3 ASR Transcriber",
-        "description": "Chuyên phân tích âm thanh, nhận diện tiếng nói thành văn bản (Speech-to-Text).",
-        "models": [
-            {
-                "id": "whisper-tiny",
-                "name": "Faster Whisper (Tiny / Base)",
-                "tag": "whisper-tiny",
-                "params": "0.1B",
-                "size_download_gb": 0.15,
-                "est_vram_gb": 0.4,
-                "category": "Audio & Speech",
-                "badge": "Nhúng Cục Bộ",
-                "modality_support": ["audio", "speech"],
-                "description": "Chuyển lời thoại trong file ghi âm/video thành text để lập chỉ mục tìm kiếm.",
+                "description": "Context dài 8192 tokens, cực kỳ nhẹ nhàng cho việc quét và lập chỉ mục nhanh.",
                 "default_selected": False
             }
         ]

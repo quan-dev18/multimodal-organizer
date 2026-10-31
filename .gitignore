@@ -55,3 +55,14 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Exclude AI skills, architecture draft artifacts, and packaging caches
+.gemini/
+.archify/
+mmo-architecture.html
+*.spec
+config.json
+phuong_phap_kien_truc_multimodal_storage.md
+K? ho?ch ph*
+Ke hoach ph*
+*.log

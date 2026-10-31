@@ -6,7 +6,12 @@ import subprocess
 import sys
 import os
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Detect directory if frozen by PyInstaller or running directly
+if getattr(sys, 'frozen', False):
+    BASE_DIR = sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(os.path.abspath(__file__))
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 SIDECAR_DIR = os.path.join(BASE_DIR, "sidecar")
 
 if BASE_DIR not in sys.path:
@@ -19,83 +24,82 @@ def ensure_ollama_running():
     try:
         r = requests.get("http://localhost:11434/api/version", timeout=1)
         if r.status_code == 200:
-            print("[MMO] Ollama Engine dang chay san.")
             return True
     except:
         pass
 
     ollama_exe = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe")
     if os.path.exists(ollama_exe):
-        print("[MMO] Dang tu dong khoi dong Ollama Daemon...")
         try:
-            # Launch detached background process
+            env = os.environ.copy()
+            if "OLLAMA_MODELS" not in env or not env["OLLAMA_MODELS"]:
+                env["OLLAMA_MODELS"] = r"D:\OllamaModels"
+            
             subprocess.Popen(
                 [ollama_exe, "serve"],
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+                env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
             for _ in range(15):
-                time.sleep(0.5)
+                time.sleep(0.4)
                 try:
                     r = requests.get("http://localhost:11434/api/version", timeout=1)
                     if r.status_code == 200:
-                        print("[MMO] Ollama Daemon da khoi dong thanh cong!")
                         return True
                 except:
                     pass
-        except Exception as e:
-            print(f"[MMO] Khong the bat Ollama tu dong: {e}")
+        except Exception:
+            pass
     return False
 
 def start_backend():
     import uvicorn
-    os.chdir(SIDECAR_DIR)
-    from main import app
+    # In PyInstaller frozen environment, import main from sidecar
+    if getattr(sys, 'frozen', False):
+        try:
+            from sidecar.main import app
+        except ImportError:
+            from main import app
+    else:
+        from sidecar.main import app
     uvicorn.run(app, host="127.0.0.1", port=8001, log_level="warning")
 
-def wait_for_services():
-    print("[MMO] Dang ket noi toi Backend Core...")
-    for _ in range(40):
-        try:
-            r = requests.get("http://127.0.0.1:8001/api/health", timeout=1)
-            if r.status_code == 200:
-                print("[MMO] Backend Core da san sang tren cong 8001!")
-                return True
-        except:
-            time.sleep(0.3)
-    return False
-
 if __name__ == "__main__":
-    print("[MMO] Khoi dong ung dung Desktop MMO...")
+    # 1. Start Ollama asynchronously
+    threading.Thread(target=ensure_ollama_running, daemon=True).start()
 
-    # 1. Auto start Ollama if installed
-    ensure_ollama_running()
-
-    # 2. Auto start Backend sidecar
-    is_running = False
+    # 2. Check if backend is already listening
+    backend_is_up = False
     try:
-        r = requests.get("http://127.0.0.1:8001/api/health", timeout=0.8)
+        r = requests.get("http://127.0.0.1:8001/api/health", timeout=0.6)
         if r.status_code == 200:
-            is_running = True
+            backend_is_up = True
     except:
         pass
 
-    if not is_running:
+    # 3. Launch backend if needed
+    if not backend_is_up:
         backend_thread = threading.Thread(target=start_backend, daemon=True)
         backend_thread.start()
-        wait_for_services()
 
-    app_url = "http://127.0.0.1:8001"
+    # 4. Resolve splash screen and icon paths
+    splash_file = os.path.join(BASE_DIR, "splash.html")
+    icon_file = os.path.join(BASE_DIR, "frontend", "public", "app_icon.ico")
+    if not os.path.exists(icon_file):
+        icon_file = os.path.join(BASE_DIR, "app_icon.ico")
 
-    # Launch native desktop window
+    # Start with splash screen that polls for backend ready, avoiding 127.0.0.1 refused
+    target_url = splash_file if os.path.exists(splash_file) else "http://127.0.0.1:8001"
+
     window = webview.create_window(
         title="MMO — Multimodal Organizer Desktop",
-        url=app_url,
+        url=target_url,
         width=1280,
         height=820,
         min_size=(1024, 680),
-        background_color='#020617',
+        background_color='#09090b',
         text_select=True,
         zoomable=True
     )

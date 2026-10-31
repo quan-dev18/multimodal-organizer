@@ -379,8 +379,9 @@ def generate_organize_preview(file_paths: List[str], target_base_dir: str) -> Li
 
     return preview_items
 
-# Global Undo Journal persisted on disk for cross-restart safe rollback
+# Global Undo/Redo Journals persisted on disk for cross-restart safe rollback
 UNDO_JOURNAL_FILE = os.path.join(os.path.expanduser("~"), ".mmo_undo_journal.json")
+REDO_JOURNAL_FILE = os.path.join(os.path.expanduser("~"), ".mmo_redo_journal.json")
 
 def load_undo_journal() -> List[Dict[str, Any]]:
     if os.path.exists(UNDO_JOURNAL_FILE):
@@ -399,6 +400,28 @@ def save_undo_journal(journal: List[Dict[str, Any]]) -> None:
             json.dump(journal, f, ensure_ascii=False, indent=2)
     except:
         pass
+
+def load_redo_journal() -> List[Dict[str, Any]]:
+    if os.path.exists(REDO_JOURNAL_FILE):
+        try:
+            with open(REDO_JOURNAL_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except:
+            pass
+    return []
+
+def save_redo_journal(journal: List[Dict[str, Any]]) -> None:
+    try:
+        with open(REDO_JOURNAL_FILE, "w", encoding="utf-8") as f:
+            json.dump(journal, f, ensure_ascii=False, indent=2)
+    except:
+        pass
+
+def clear_redo_journal() -> None:
+    """Clear redo stack whenever a new action is performed"""
+    save_redo_journal([])
 
 # Execute Safe Organize: Supports both files and entire folders with true MOVE
 def organize_files_safe(
@@ -483,6 +506,7 @@ def organize_files_safe(
         journal = load_undo_journal()
         journal.extend(batch_journal)
         save_undo_journal(journal)
+        clear_redo_journal()
 
     return {
         "success": True,
@@ -492,53 +516,137 @@ def organize_files_safe(
         "items": moved
     }
 
+def get_action_history() -> Dict[str, Any]:
+    """Get the full timeline of operations, including undo stack and redo stack"""
+    undo_items = load_undo_journal()
+    redo_items = load_redo_journal()
+    
+    # Format undo entries
+    timeline = []
+    for idx, item in enumerate(undo_items):
+        timeline.append({
+            "id": f"undo_{idx}",
+            "type": "organize",
+            "state": "applied", # currently in effect
+            "mode": item.get("mode", "move"),
+            "is_dir": item.get("is_dir", False),
+            "from": item.get("from", ""),
+            "to": item.get("to", ""),
+            "timestamp": item.get("timestamp", int(time.time()))
+        })
+
+    # Format redo entries (future steps if user redos)
+    for idx, item in enumerate(redo_items):
+        timeline.append({
+            "id": f"redo_{idx}",
+            "type": "organize",
+            "state": "undone", # previously undone, can be reapplied
+            "mode": item.get("mode", "move"),
+            "is_dir": item.get("is_dir", False),
+            "from": item.get("from", ""),
+            "to": item.get("to", ""),
+            "timestamp": item.get("timestamp", int(time.time()))
+        })
+
+    return {
+        "undo_count": len(undo_items),
+        "redo_count": len(redo_items),
+        "can_undo": len(undo_items) > 0,
+        "can_redo": len(redo_items) > 0,
+        "history": timeline
+    }
+
 def undo_last_organize() -> Dict[str, Any]:
-    """Undo the last batch of organized files and folders safely"""
+    """Undo the last organized file/folder safely and push it to the redo stack"""
     items_to_undo = load_undo_journal()
     if not items_to_undo:
         return {"success": False, "message": "Không có lịch sử thao tác nào để hoàn tác."}
 
-    undone_count = 0
-    failed_items = []
-    still_pending = []
+    item = items_to_undo.pop()
+    src_orig = item["from"]
+    dest_current = item["to"]
+    mode = item.get("mode", "move")
 
-    # Process undo in reverse chronological order
-    for item in reversed(items_to_undo):
-        src_orig = item["from"]
-        dest_current = item["to"]
-        mode = item.get("mode", "move")
+    try:
+        if os.path.exists(dest_current):
+            os.makedirs(os.path.dirname(src_orig), exist_ok=True)
+            if mode == "move":
+                shutil.move(dest_current, src_orig)
+            elif mode == "copy":
+                send2trash.send2trash(dest_current)
 
-        try:
-            if os.path.exists(dest_current):
-                # Ensure destination directory structure exists before moving back
-                os.makedirs(os.path.dirname(src_orig), exist_ok=True)
-                if mode == "move":
-                    # Move back to original place
-                    shutil.move(dest_current, src_orig)
-                    undone_count += 1
-                elif mode == "copy":
-                    # Just remove copied file/folder
-                    send2trash.send2trash(dest_current)
-                    undone_count += 1
-            else:
-                # Target file doesn't exist anymore (already moved or deleted)
-                pass
-        except Exception as err:
-            failed_items.append({"item": item, "error": str(err)})
-            still_pending.append(item)
+            # Successfully moved back: persist updated undo journal & push to redo stack
+            save_undo_journal(items_to_undo)
+            redo_stack = load_redo_journal()
+            redo_stack.append(item)
+            save_redo_journal(redo_stack)
 
-    # Save any failed operations back to journal
-    save_undo_journal(still_pending)
-
-    if undone_count > 0:
-        return {
-            "success": True,
-            "undone_count": undone_count,
-            "message": f"Đã hoàn tác thành công {undone_count} tệp/thư mục về vị trí ban đầu!"
-        }
-    else:
+            file_basename = Path(src_orig).name
+            return {
+                "success": True,
+                "undone_count": 1,
+                "message": f"Đã hoàn tác (Undo): Chuyển '{file_basename}' về lại vị trí cũ."
+            }
+        else:
+            save_undo_journal(items_to_undo)
+            return {
+                "success": False,
+                "undone_count": 0,
+                "message": f"Không tìm thấy tệp đích '{dest_current}' (có thể đã bị di chuyển hoặc xóa)."
+            }
+    except Exception as err:
+        # Re-insert item on failure
+        items_to_undo.append(item)
+        save_undo_journal(items_to_undo)
         return {
             "success": False,
             "undone_count": 0,
-            "message": "Không thể hoàn tác (các tệp đích đã bị xóa hoặc không còn tồn tại)."
+            "message": f"Lỗi hoàn tác: {str(err)}"
+        }
+
+def redo_last_organize() -> Dict[str, Any]:
+    """Redo the last undone operation and push it back to the undo stack"""
+    redo_items = load_redo_journal()
+    if not redo_items:
+        return {"success": False, "message": "Không có thao tác nào trong hàng đợi để làm lại (Redo)."}
+
+    item = redo_items.pop()
+    src_orig = item["from"]
+    dest_current = item["to"]
+    mode = item.get("mode", "move")
+
+    try:
+        if os.path.exists(src_orig):
+            os.makedirs(os.path.dirname(dest_current), exist_ok=True)
+            if mode == "move":
+                shutil.move(src_orig, dest_current)
+            elif mode == "copy":
+                shutil.copy2(src_orig, dest_current)
+
+            # Successfully redone: save redo stack & push back to undo journal
+            save_redo_journal(redo_items)
+            undo_stack = load_undo_journal()
+            undo_stack.append(item)
+            save_undo_journal(undo_stack)
+
+            file_basename = Path(dest_current).name
+            return {
+                "success": True,
+                "redone_count": 1,
+                "message": f"Đã làm lại (Redo): Sắp xếp '{file_basename}' sang thư mục đích."
+            }
+        else:
+            save_redo_journal(redo_items)
+            return {
+                "success": False,
+                "redone_count": 0,
+                "message": f"Không tìm thấy tệp gốc '{src_orig}' để làm lại."
+            }
+    except Exception as err:
+        redo_items.append(item)
+        save_redo_journal(redo_items)
+        return {
+            "success": False,
+            "redone_count": 0,
+            "message": f"Lỗi làm lại (Redo): {str(err)}"
         }
