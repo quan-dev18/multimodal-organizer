@@ -20,8 +20,7 @@ import {
   ShieldCheck,
   X,
   Check,
-  FolderOpen,
-  Zap
+  FolderOpen
 } from 'lucide-react';
 
 const API_BASE = "http://127.0.0.1:8001/api";
@@ -260,30 +259,6 @@ export const FileExplorerTree: React.FC = () => {
     } catch (e: any) {
       setActionMessage(`Lỗi dọn dẹp: ${e.message}`);
       alert(`Lỗi dọn dẹp: ${e.message}`);
-    }
-  };
-
-  // Run C:\Tool\TempCleaner.exe directly for deep system & user Temp cleanup
-  const handleCleanTempTool = async () => {
-    if (!confirm("Khởi chạy công cụ TempCleaner (C:\\Tool\\TempCleaner.exe) để quét và dọn sạch sâu toàn bộ bộ nhớ tạm (Temp/Cache) của hệ thống và ứng dụng?")) {
-      return;
-    }
-
-    setActionMessage("Đang chạy công cụ C:\\Tool\\TempCleaner.exe để dọn dẹp sâu toàn bộ Temp hệ thống...");
-    try {
-      const res = await fetch(`${API_BASE}/system/clean_temp`, { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        setActionMessage(data.message);
-        alert(data.message);
-        loadDirectory(currentPath);
-      } else {
-        alert(data.message);
-        setActionMessage(data.message);
-      }
-    } catch (e: any) {
-      alert(`Lỗi dọn Temp: ${e.message}`);
-      setActionMessage(`Lỗi dọn Temp: ${e.message}`);
     }
   };
 
@@ -530,15 +505,6 @@ export const FileExplorerTree: React.FC = () => {
           >
             <Trash2 className="w-3.5 h-3.5" />
             Dọn Sạch Rác (1-Click)
-          </button>
-
-          <button
-            onClick={handleCleanTempTool}
-            className="px-3.5 py-1.5 bg-amber-600/90 hover:bg-amber-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors shadow shadow-amber-950/40"
-            title="Khởi chạy C:\Tool\TempCleaner.exe để dọn sạch sâu toàn bộ bộ nhớ tạm (Temp) hệ thống"
-          >
-            <Zap className="w-3.5 h-3.5" />
-            Dọn Sạch Temp (C:\Tool)
           </button>
 
           <button

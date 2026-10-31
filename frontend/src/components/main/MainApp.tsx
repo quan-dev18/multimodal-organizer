@@ -12,6 +12,10 @@ import {
 } from 'lucide-react';
 import { FileExplorerTree } from './FileExplorerTree';
 import { DedicatedTempCleaner } from './DedicatedTempCleaner';
+import { RuleConfigView } from './RuleConfigView';
+import { TieringOptimizerView } from './TieringOptimizerView';
+import { SemanticSearchView } from './SemanticSearchView';
+import { CostInsightsView } from './CostInsightsView';
 
 interface MainAppProps {
   onBackToPreflight: () => void;
@@ -159,6 +163,18 @@ export const MainApp: React.FC<MainAppProps> = ({ onBackToPreflight, activeModel
 
         {/* Tab: Dedicated System & App Temp Cleaner */}
         {activeTab === 'temp_cleaner' && <DedicatedTempCleaner />}
+
+        {/* Tab: Rules Engine (Quy Tắc Sắp Xếp) */}
+        {activeTab === 'organize' && <RuleConfigView />}
+
+        {/* Tab: Tiering Optimizer (Phân Tầng Hot / Warm / Cold) */}
+        {activeTab === 'storage' && <TieringOptimizerView />}
+
+        {/* Tab: Semantic Search (Tìm Kiếm Ngữ Nghĩa) */}
+        {activeTab === 'search' && <SemanticSearchView />}
+
+        {/* Tab: Insights & ROI (Báo Cáo & Tối Ưu Chi Phí) */}
+        {activeTab === 'insights' && <CostInsightsView />}
 
         {/* Tab 2: Dashboard */}
         {activeTab === 'dashboard' && (
