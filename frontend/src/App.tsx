@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { VramGauge } from './components/preflight/VramGauge';
-import { ModelSelector } from './components/preflight/ModelSelector';
-import type { ModelItem } from './components/preflight/ModelSelector';
+import { MultiModelSelector } from './components/preflight/MultiModelSelector';
+import type { ModelItem, ModelCluster } from './components/preflight/MultiModelSelector';
 import { BenchmarkCard } from './components/preflight/BenchmarkCard';
 import { MainApp } from './components/main/MainApp';
 import { ArrowRight, AlertCircle, RefreshCw } from 'lucide-react';
@@ -12,42 +12,35 @@ export function App() {
   const [isInPreflight, setIsInPreflight] = useState<boolean>(true);
   const [hardware, setHardware] = useState<any>(null);
   const [ollamaStatus, setOllamaStatus] = useState<any>(null);
-  const [catalog, setCatalog] = useState<ModelItem[]>([]);
-  const [selectedModel, setSelectedModel] = useState<ModelItem>({
-    id: "qwen2.5:1.5b",
-    name: "Qwen 2.5 (1.5B)",
-    tag: "qwen2.5:1.5b",
-    params: "1.5B",
-    size_download_gb: 1.0,
-    est_vram_gb: 1.6,
-    category: "Text & Metadata",
-    badge: "Khuyên dùng (4GB VRAM)",
-    description: "Siêu nhanh, trích xuất metadata, phân loại file và sinh tên folder chuẩn. Tốc độ cao ~45 tok/s.",
-    recommended_for: ["classification", "metadata"]
-  });
+  const [clusters, setClusters] = useState<ModelCluster[]>([]);
+  const [flatCatalog, setFlatCatalog] = useState<ModelItem[]>([]);
+  
+  // Multi-model selection: user can pick multiple models across clusters
+  const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(
+    new Set(["qwen2.5:1.5b", "moondream", "bge-m3"])
+  );
 
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState("");
   const [loadingHardware, setLoadingHardware] = useState(true);
 
-  // Fetch Hardware & Ollama Info
+  // Fetch Hardware & Clusters
   const refreshSystemInfo = async () => {
     setLoadingHardware(true);
     try {
-      const [hwRes, ollamaRes, catRes] = await Promise.all([
+      const [hwRes, ollamaRes, clusRes, catRes] = await Promise.all([
         fetch(`${API_BASE}/hardware`).then(r => r.json()).catch(() => null),
         fetch(`${API_BASE}/ollama/status`).then(r => r.json()).catch(() => null),
+        fetch(`${API_BASE}/models/clusters`).then(r => r.json()).catch(() => null),
         fetch(`${API_BASE}/models/catalog`).then(r => r.json()).catch(() => null)
       ]);
 
       if (hwRes) setHardware(hwRes);
       if (ollamaRes) setOllamaStatus(ollamaRes);
-      if (catRes && catRes.length > 0) {
-        setCatalog(catRes);
-        if (!selectedModel) setSelectedModel(catRes[0]);
-      }
+      if (clusRes && clusRes.length > 0) setClusters(clusRes);
+      if (catRes && catRes.length > 0) setFlatCatalog(catRes);
     } catch (e) {
-      console.error("Error connecting to sidecar backend", e);
+      console.error("Lỗi kết nối sidecar", e);
     } finally {
       setLoadingHardware(false);
     }
@@ -55,14 +48,25 @@ export function App() {
 
   useEffect(() => {
     refreshSystemInfo();
-    const interval = setInterval(refreshSystemInfo, 10000); // Polling every 10s
+    const interval = setInterval(refreshSystemInfo, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  // Toggle multi-model selection
+  const handleToggleModel = (m: ModelItem) => {
+    const next = new Set(selectedModelIds);
+    if (next.has(m.id)) {
+      if (next.size > 1) next.delete(m.id); // Keep at least one
+    } else {
+      next.add(m.id);
+    }
+    setSelectedModelIds(next);
+  };
 
   // Handle Download / Pull model via Ollama
   const handleDownloadModel = async (modelTag: string) => {
     setIsDownloading(true);
-    setDownloadProgress("Bắt đầu kết nối tới Ollama...");
+    setDownloadProgress(`Đang kết nối tải ${modelTag}...`);
     try {
       const response = await fetch(`${API_BASE}/ollama/pull`, {
         method: 'POST',
@@ -70,10 +74,7 @@ export function App() {
         body: JSON.stringify({ model_name: modelTag })
       });
 
-      if (!response.body) {
-        throw new Error("No response body stream");
-      }
-
+      if (!response.body) throw new Error("Không có phản hồi từ máy chủ");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
@@ -94,9 +95,7 @@ export function App() {
                 setDownloadProgress(data.status);
               }
             }
-          } catch {
-            // non-json line
-          }
+          } catch {}
         }
       }
 
@@ -109,7 +108,7 @@ export function App() {
     }
   };
 
-  // Run Benchmark
+  // Run Benchmark on primary selected model
   const handleRunBenchmark = async (modelTag: string) => {
     const res = await fetch(`${API_BASE}/models/benchmark`, {
       method: 'POST',
@@ -119,40 +118,44 @@ export function App() {
     return res.json();
   };
 
-  // Calculate parameters for VRAM Gauge
+  // Calculate combined VRAM for all selected models
   const totalVram = hardware?.gpu?.total_vram_gb || 4.0;
-  const usedVramOther = hardware?.gpu?.used_vram_gb ? Math.max(hardware.gpu.used_vram_gb - (selectedModel?.est_vram_gb || 0), 0.8) : 1.32;
-  const modelVram = selectedModel?.est_vram_gb || 1.6;
+  const usedVramOther = hardware?.gpu?.used_vram_gb ? Math.max(hardware.gpu.used_vram_gb - 1.6, 0.8) : 1.32;
   const gpuName = hardware?.gpu?.name || "NVIDIA GeForce GTX 1650";
 
-  const installedModelsList: string[] = ollamaStatus?.models?.map((m: any) => m.name) || [];
-  const isSelectedInstalled = installedModelsList.some(tag => tag.includes(selectedModel.tag) || selectedModel.tag.includes(tag));
+  // Calculate sum of VRAM of all active models
+  const selectedModelsList = flatCatalog.filter(m => selectedModelIds.has(m.id));
+  const totalModelVram = selectedModelsList.reduce((acc, m) => acc + (m.est_vram_gb || 1.0), 0);
 
-  // If user passed preflight, show main MMO Desktop app
+  const installedModelsList: string[] = ollamaStatus?.models?.map((m: any) => m.name) || [];
+  const primaryModel = selectedModelsList[0] || flatCatalog[0] || { tag: "qwen2.5:1.5b", name: "Qwen 2.5 1.5B" };
+  const isPrimaryInstalled = installedModelsList.some(tag => tag.includes(primaryModel.tag) || primaryModel.tag.includes(tag));
+
+  // If in main app view
   if (!isInPreflight) {
     return (
       <MainApp
         onBackToPreflight={() => setIsInPreflight(true)}
-        activeModelName={selectedModel.name}
+        activeModelNames={selectedModelsList.map(m => m.name)}
       />
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-6 max-w-6xl mx-auto">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-6 max-w-7xl mx-auto">
       {/* Top Header */}
-      <header className="flex items-center justify-between pb-4 border-b border-slate-800">
+      <header className="flex items-center justify-between pb-4 border-b border-slate-800 shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-lime-500 to-emerald-600 flex items-center justify-center font-black text-slate-950 text-2xl shadow-lg shadow-lime-950/50">
             M
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="font-bold text-lg text-white tracking-wide">MMO — MULTIMODAL ORGANIZER</h1>
-              <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">PRE-FLIGHT</span>
+              <h1 className="font-bold text-lg text-white tracking-wide">MMO — ĐA MÔ HÌNH (MULTI-MODEL AI ORGANIZER)</h1>
+              <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">PHASE 2 - 3</span>
             </div>
             <p className="text-xs text-slate-400">
-              Kiểm tra tài nguyên phần cứng & cấu hình mô hình AI cục bộ trước khi khởi động
+              Cấu hình cụm mô hình AI chuyên trách từng modality & đo lường tài nguyên VRAM thực tế
             </p>
           </div>
         </div>
@@ -171,7 +174,7 @@ export function App() {
             onClick={() => setIsInPreflight(false)}
             className="px-5 py-2 bg-gradient-to-r from-lime-500 to-emerald-500 hover:from-lime-400 hover:to-emerald-400 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-2 transition-all shadow-lg shadow-lime-950/40"
           >
-            Tiếp Tục Vào Ứng Dụng
+            Vào Không Gian Lưu Trữ
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>
@@ -179,48 +182,48 @@ export function App() {
 
       {/* Main Content Area */}
       <main className="space-y-6 my-6">
-        {/* 1. VRAM Gauge Bar (Game HUD Style) */}
+        {/* 1. Combined VRAM Gauge Bar */}
         <section>
           <VramGauge
             totalVramGb={totalVram}
             usedVramOtherGb={usedVramOther}
-            modelVramGb={modelVram}
-            appName={`MMO [${selectedModel.name}]`}
+            modelVramGb={totalModelVram}
+            appName={`Cụm ${selectedModelIds.size} Mô Hình MMO`}
             gpuName={gpuName}
           />
         </section>
 
-        {/* Ollama Service Notice if not running */}
+        {/* Ollama Alert if not running */}
         {ollamaStatus && !ollamaStatus.installed_or_running && (
           <div className="bg-amber-950/40 border border-amber-800/60 rounded-xl p-4 flex items-start gap-3 text-xs text-amber-200">
             <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
             <div>
-              <span className="font-semibold text-amber-300">Ollama chưa được khởi động trên máy:</span>
-              <p className="mt-1 text-slate-300">
-                Để tải và chạy mô hình cục bộ, vui lòng cài đặt Ollama từ <a href="https://ollama.com/download" target="_blank" rel="noreferrer" className="text-lime-400 underline font-semibold">ollama.com</a> và bật ứng dụng Ollama trên máy tính. Bạn vẫn có thể duyệt cấu hình VRAM và vào giao diện chính bất kỳ lúc nào.
+              <span className="font-semibold text-amber-300">Ollama chưa được bật trên máy:</span>
+              <p className="mt-1 text-slate-300 leading-relaxed">
+                Để nạp và tải các mô hình cục bộ, hãy khởi động ứng dụng Ollama. Bạn vẫn có thể cấu hình trước các cụm mô hình và bấm <b>"Vào Không Gian Lưu Trữ"</b> để quản lý cây thư mục và dọn dẹp file ngay.
               </p>
             </div>
           </div>
         )}
 
-        {/* 2. Model Selection Grid */}
+        {/* 2. Multi-Model Cluster Selection */}
         <section>
-          <ModelSelector
-            catalog={catalog}
-            selectedModel={selectedModel}
+          <MultiModelSelector
+            clusters={clusters}
+            selectedModelIds={selectedModelIds}
             installedModels={installedModelsList}
             isDownloading={isDownloading}
             downloadProgress={downloadProgress}
-            onSelectModel={(m) => setSelectedModel(m)}
+            onToggleModel={handleToggleModel}
             onDownloadModel={handleDownloadModel}
           />
         </section>
 
-        {/* 3. Benchmark & Verification */}
+        {/* 3. Benchmark Card */}
         <section>
           <BenchmarkCard
-            selectedModelTag={selectedModel.tag}
-            isInstalled={isSelectedInstalled}
+            selectedModelTag={primaryModel.tag}
+            isInstalled={isPrimaryInstalled}
             onRunBenchmark={handleRunBenchmark}
           />
         </section>
@@ -230,11 +233,11 @@ export function App() {
       <footer className="pt-4 border-t border-slate-900 flex items-center justify-between text-[11px] text-slate-500 font-mono">
         <div className="flex items-center gap-4">
           <span>GPU: <b className="text-slate-400 font-sans">{gpuName}</b> ({totalVram} GB)</span>
-          <span>RAM HỆ THỐNG: <b className="text-slate-400 font-sans">{hardware?.ram?.total_gb || 16} GB</b> (Trống: {hardware?.ram?.free_gb || 6} GB)</span>
-          <span>CPU: <b className="text-slate-400 font-sans">{hardware?.cpu?.logical_cores || 8} Threads</b></span>
+          <span>RAM: <b className="text-slate-400 font-sans">{hardware?.ram?.total_gb || 16} GB</b> (Trống: {hardware?.ram?.free_gb || 6} GB)</span>
+          <span>CPU: <b className="text-slate-400 font-sans">{hardware?.cpu?.logical_cores || 8} Luồng</b></span>
         </div>
         <div className="text-slate-600">
-          MMO Multimodal Organizer v0.1-alpha · Offline First
+          MMO Multimodal Organizer v1.1 · Cây Thư Mục & Đa Mô Hình
         </div>
       </footer>
     </div>

@@ -1,3 +1,5 @@
+import sys
+import os
 import json
 import time
 import requests
@@ -6,17 +8,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
-import sys
-import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from hardware import get_hardware_info, check_ollama_status
-from models_catalog import get_recommended_catalog
-from file_manager import scan_files, safe_clean_trash, organize_files_safe
+from models_catalog import get_all_model_clusters, get_flat_catalog
+from file_manager import scan_directory_tree, safe_clean_trash, organize_files_safe
 
-app = FastAPI(title="MMO Desktop Core Engine", version="1.0.0")
+app = FastAPI(title="MMO Multimodal Core Engine", version="1.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,11 +31,14 @@ class PullRequest(BaseModel):
 
 class BenchmarkRequest(BaseModel):
     model_name: str
-    prompt: Optional[str] = "Phân loại tệp: 'Bao_cao_tai_chinh_quy_3_2026.pdf', 2.5MB. Trả về nhãn JSON."
+    prompt: Optional[str] = "Phân tích và gán nhãn cho tài liệu: 'Bao_cao_NCKH_2026.docx'. Trả về JSON."
 
-class ScanRequest(BaseModel):
+class ScanTreeRequest(BaseModel):
     directory: str
     include_hidden: bool = True
+
+class DeepScanProgressRequest(BaseModel):
+    directory: str
 
 class TrashRequest(BaseModel):
     file_paths: List[str]
@@ -43,11 +46,11 @@ class TrashRequest(BaseModel):
 class OrganizeRequest(BaseModel):
     file_paths: List[str]
     target_base: str
-    mode: str = "copy" # copy or move
+    mode: str = "copy"
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "MMO Desktop Core"}
+    return {"status": "ok", "service": "MMO Desktop Core 1.1"}
 
 @app.get("/api/hardware")
 def api_hardware():
@@ -57,18 +60,23 @@ def api_hardware():
 def api_ollama_status():
     return check_ollama_status()
 
+# Return Model Clusters & Multi-model selection
+@app.get("/api/models/clusters")
+def api_models_clusters():
+    return get_all_model_clusters()
+
 @app.get("/api/models/catalog")
 def api_models_catalog():
-    return get_recommended_catalog()
+    return get_flat_catalog()
 
 @app.post("/api/ollama/pull")
 def api_ollama_pull(req: PullRequest):
     ollama_url = "http://localhost:11434/api/pull"
     def generate():
         try:
-            with requests.post(ollama_url, json={"name": req.model_name}, stream=True, timeout=1200) as r:
+            with requests.post(ollama_url, json={"name": req.model_name}, stream=True, timeout=1800) as r:
                 if r.status_code != 200:
-                    yield json.dumps({"error": f"Ollama lỗi HTTP {r.status_code}"}) + "\n"
+                    yield json.dumps({"error": f"Lỗi Ollama: HTTP {r.status_code}"}) + "\n"
                     return
                 for chunk in r.iter_lines():
                     if chunk:
@@ -108,7 +116,7 @@ def api_benchmark(req: BenchmarkRequest):
             "response": data.get("response", ""),
             "tokens_per_sec": tokens_per_sec,
             "total_time_sec": round(total_time, 2),
-            "speed_rating": "Cực mượt" if tokens_per_sec > 35 else ("Mượt" if tokens_per_sec > 15 else "Chậm")
+            "speed_rating": "Cực mượt" if tokens_per_sec > 35 else ("Mượt" if tokens_per_sec > 15 else "Khá")
         }
     except Exception as e:
         return {
@@ -117,11 +125,70 @@ def api_benchmark(req: BenchmarkRequest):
             "message": "Không kết nối được tới mô hình. Vui lòng bật Ollama và tải model."
         }
 
-# File Management Endpoints (L1 Ingestion, L6 Storage, Safe Trash & Organize)
-@app.post("/api/files/scan")
-def api_scan_files(req: ScanRequest):
-    files = scan_files(req.directory, req.include_hidden)
-    return {"directory": req.directory, "total_items": len(files), "files": files}
+# Explorer Tree Scanning (Folder inside folder)
+@app.post("/api/files/tree")
+def api_scan_tree(req: ScanTreeRequest):
+    return scan_directory_tree(req.directory, req.include_hidden)
+
+# Deep Scan with Progress Stream & Time Estimation (Only runs when requested)
+@app.post("/api/files/deep_scan_stream")
+def api_deep_scan_stream(req: DeepScanProgressRequest):
+    def scan_generator():
+        root_dir = req.directory
+        start_time = time.time()
+        scanned_count = 0
+        total_bytes = 0
+        junk_count = 0
+        hidden_count = 0
+
+        # Scan iteratively
+        for dirpath, dirnames, filenames in os.walk(root_dir):
+            current_folder = dirpath
+            for fname in filenames:
+                scanned_count += 1
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    fsize = os.path.getsize(fpath)
+                    total_bytes += fsize
+                except:
+                    pass
+
+                # Check junk
+                ext = os.path.splitext(fname)[1].lower().lstrip(".")
+                if ext in ["tmp", "log", "bak", "cache", "crdownload"] or fname.lower() in ["thumbs.db", ".ds_store"]:
+                    junk_count += 1
+                if fname.startswith("."):
+                    hidden_count += 1
+
+                # Yield progress updates periodically
+                if scanned_count % 30 == 0 or scanned_count <= 10:
+                    elapsed = time.time() - start_time
+                    rate = scanned_count / elapsed if elapsed > 0 else 100
+                    # Estimated time left based on local folder density
+                    est_time_sec = round(max(0.5, (100 - (scanned_count % 100)) / max(rate, 1)), 1)
+                    
+                    yield json.dumps({
+                        "type": "progress",
+                        "scanned_count": scanned_count,
+                        "current_file": fname,
+                        "current_folder": current_folder,
+                        "junk_count": junk_count,
+                        "hidden_count": hidden_count,
+                        "elapsed_seconds": round(elapsed, 1),
+                        "estimated_seconds_left": est_time_sec
+                    }) + "\n"
+
+        elapsed_total = round(time.time() - start_time, 2)
+        yield json.dumps({
+            "type": "completed",
+            "total_scanned": scanned_count,
+            "total_bytes": total_bytes,
+            "junk_count": junk_count,
+            "hidden_count": hidden_count,
+            "elapsed_seconds": elapsed_total
+        }) + "\n"
+
+    return StreamingResponse(scan_generator(), media_type="application/x-ndjson")
 
 @app.post("/api/files/trash")
 def api_trash_files(req: TrashRequest):
