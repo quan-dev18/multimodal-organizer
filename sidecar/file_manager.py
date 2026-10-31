@@ -247,6 +247,9 @@ def generate_organize_preview(file_paths: List[str], target_base_dir: str) -> Li
 
     return preview_items
 
+# Global Undo Journal for safe rollback
+UNDO_JOURNAL: List[Dict[str, Any]] = []
+
 # Execute Safe Organize: Supports both files and entire folders with true MOVE
 def organize_files_safe(
     file_paths: List[str], 

@@ -19,7 +19,8 @@ import {
   RotateCcw,
   ShieldCheck,
   X,
-  Check
+  Check,
+  FolderOpen
 } from 'lucide-react';
 
 const API_BASE = "http://127.0.0.1:8001/api";
@@ -83,6 +84,7 @@ export const FileExplorerTree: React.FC = () => {
   // Drives State
   const [drives, setDrives] = useState<DriveInfo[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("D:\\AI_NCKH");
+  const [pathInput, setPathInput] = useState<string>("D:\\AI_NCKH");
   const [parentPath, setParentPath] = useState<string | null>(null);
   
   // Folder Content State
@@ -126,7 +128,10 @@ export const FileExplorerTree: React.FC = () => {
       const data = await res.json();
       if (data.folders) setFolders(data.folders);
       if (data.files) setFiles(data.files);
-      if (data.current_path) setCurrentPath(data.current_path);
+      if (data.current_path) {
+        setCurrentPath(data.current_path);
+        setPathInput(data.current_path);
+      }
       setParentPath(data.parent_path || null);
       setSelectedPaths(new Set());
     } catch (e: any) {
@@ -144,6 +149,40 @@ export const FileExplorerTree: React.FC = () => {
   // Switch drive easily (C:, D:, USBs)
   const handleSelectDrive = (drivePath: string) => {
     loadDirectory(drivePath);
+  };
+
+  // Open native Windows Folder Picker for Explorer
+  const handleBrowseExplorerFolder = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/system/select_folder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: "Chọn thư mục duyệt tệp MMO" })
+      });
+      const data = await res.json();
+      if (data.success && data.path) {
+        loadDirectory(data.path);
+      }
+    } catch (e: any) {
+      setActionMessage(`Lỗi mở hộp thoại duyệt thư mục: ${e.message}`);
+    }
+  };
+
+  // Open native Windows Folder Picker for Target Vault
+  const handleBrowseVaultFolder = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/system/select_folder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: "Chọn thư mục đích lưu trữ đa phương thức" })
+      });
+      const data = await res.json();
+      if (data.success && data.path) {
+        setTargetVaultPath(data.path);
+      }
+    } catch (e: any) {
+      alert(`Lỗi chọn thư mục đích: ${e.message}`);
+    }
   };
 
   // Start Deep Scan with Progress & Time Estimation
@@ -361,30 +400,63 @@ export const FileExplorerTree: React.FC = () => {
 
       {/* 2. Breadcrumb Navigation & Controls */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-2 flex-1 min-w-[340px]">
+        <form 
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (pathInput.trim()) loadDirectory(pathInput.trim());
+          }}
+          className="flex items-center gap-2 flex-1 min-w-[340px]"
+        >
           {parentPath && (
             <button
+              type="button"
               onClick={() => loadDirectory(parentPath)}
               title="Lên thư mục cha"
-              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors"
+              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors shrink-0"
             >
               <ArrowUp className="w-4 h-4" />
             </button>
           )}
 
-          <div className="flex-1 flex items-center bg-slate-950 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs font-mono text-lime-400">
-            <span className="truncate">{currentPath}</span>
+          <div className="flex-1 flex items-center bg-slate-950 border border-slate-700/80 rounded-lg px-2.5 py-1 text-xs font-mono text-lime-400 focus-within:border-lime-500/80">
+            <input
+              type="text"
+              value={pathInput}
+              onChange={(e) => setPathInput(e.target.value)}
+              placeholder="Dán hoặc nhập đường dẫn Windows (ví dụ C:\Users\Admin\Downloads)..."
+              className="w-full bg-transparent outline-none text-lime-400 placeholder:text-slate-600 font-mono"
+            />
           </div>
 
           <button
+            type="submit"
+            disabled={loading}
+            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-mono border border-slate-700 transition-colors shrink-0"
+            title="Đi tới đường dẫn (Enter)"
+          >
+            Đi tới
+          </button>
+
+          <button
+            type="button"
+            onClick={handleBrowseExplorerFolder}
+            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-lime-400 rounded-lg text-xs font-mono border border-slate-700 hover:border-lime-500/40 flex items-center gap-1.5 transition-colors shrink-0"
+            title="Mở cửa sổ chọn thư mục hệ thống"
+          >
+            <FolderOpen className="w-3.5 h-3.5" />
+            Browse...
+          </button>
+
+          <button
+            type="button"
             onClick={() => loadDirectory(currentPath)}
             disabled={loading}
-            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors"
+            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors shrink-0"
             title="Làm mới"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-lime-400' : ''}`} />
           </button>
-        </div>
+        </form>
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
@@ -630,12 +702,24 @@ export const FileExplorerTree: React.FC = () => {
             <div className="p-4 space-y-3 flex-1 overflow-y-auto">
               <div>
                 <label className="text-xs font-mono text-slate-400 block mb-1">Thư mục đích lưu trữ đa phương thức:</label>
-                <input
-                  type="text"
-                  value={targetVaultPath}
-                  onChange={(e) => setTargetVaultPath(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-lime-400 font-mono"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={targetVaultPath}
+                    onChange={(e) => setTargetVaultPath(e.target.value)}
+                    placeholder="Nhập hoặc dán đường dẫn đích (ví dụ: D:\MMO_Storage\Vault)..."
+                    className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-lime-400 font-mono outline-none focus:border-lime-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleBrowseVaultFolder}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-lime-400 rounded-lg text-xs font-mono border border-slate-700 hover:border-lime-500/40 flex items-center gap-1.5 transition-colors shrink-0"
+                    title="Mở cửa sổ chọn thư mục đích"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" />
+                    Browse...
+                  </button>
+                </div>
               </div>
 
               <div className="border border-slate-800 rounded-xl overflow-hidden">
