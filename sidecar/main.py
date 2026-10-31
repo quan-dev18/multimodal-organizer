@@ -49,6 +49,7 @@ class DeepScanProgressRequest(BaseModel):
 
 class TrashRequest(BaseModel):
     file_paths: List[str]
+    clean_system_temp: bool = False
 
 class OrganizePreviewRequest(BaseModel):
     file_paths: List[str]
@@ -312,7 +313,13 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
 
 @app.post("/api/files/trash")
 def api_trash_files(req: TrashRequest):
-    return safe_clean_trash(req.file_paths)
+    return safe_clean_trash(req.file_paths, req.clean_system_temp)
+
+# Run TempCleaner tool directly
+@app.post("/api/system/clean_temp")
+def api_clean_system_temp():
+    from file_manager import run_external_temp_cleaner
+    return run_external_temp_cleaner()
 
 @app.post("/api/files/organize")
 def api_organize_files(req: OrganizeRequest):

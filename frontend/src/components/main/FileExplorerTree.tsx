@@ -20,7 +20,8 @@ import {
   ShieldCheck,
   X,
   Check,
-  FolderOpen
+  FolderOpen,
+  Zap
 } from 'lucide-react';
 
 const API_BASE = "http://127.0.0.1:8001/api";
@@ -242,20 +243,47 @@ export const FileExplorerTree: React.FC = () => {
     }
 
     try {
+      setActionMessage("Đang tiến hành dọn sạch tệp rác...");
       const res = await fetch(`${API_BASE}/files/trash`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_paths: targets })
+        body: JSON.stringify({ file_paths: targets, clean_system_temp: false })
       });
       const data = await res.json();
       if (data.blocked_count > 0) {
-        setActionMessage(`Đã bảo vệ an toàn ${data.blocked_count} tệp hệ thống Windows. Đã dọn sạch ${data.cleaned_count} tệp rác vào Recycle Bin.`);
+        setActionMessage(`Đã bảo vệ an toàn ${data.blocked_count} tệp hệ thống. Đã dọn sạch ${data.cleaned_count} tệp rác vào Recycle Bin.`);
       } else {
         setActionMessage(`Đã dọn sạch ${data.cleaned_count} tệp rác vào Thùng rác Recycle Bin thành công!`);
       }
+      alert(data.message || `Đã dọn sạch ${data.cleaned_count} tệp rác.`);
       loadDirectory(currentPath);
     } catch (e: any) {
       setActionMessage(`Lỗi dọn dẹp: ${e.message}`);
+      alert(`Lỗi dọn dẹp: ${e.message}`);
+    }
+  };
+
+  // Run C:\Tool\TempCleaner.exe directly for deep system & user Temp cleanup
+  const handleCleanTempTool = async () => {
+    if (!confirm("Khởi chạy công cụ TempCleaner (C:\\Tool\\TempCleaner.exe) để quét và dọn sạch sâu toàn bộ bộ nhớ tạm (Temp/Cache) của hệ thống và ứng dụng?")) {
+      return;
+    }
+
+    setActionMessage("Đang chạy công cụ C:\\Tool\\TempCleaner.exe để dọn dẹp sâu toàn bộ Temp hệ thống...");
+    try {
+      const res = await fetch(`${API_BASE}/system/clean_temp`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setActionMessage(data.message);
+        alert(data.message);
+        loadDirectory(currentPath);
+      } else {
+        alert(data.message);
+        setActionMessage(data.message);
+      }
+    } catch (e: any) {
+      alert(`Lỗi dọn Temp: ${e.message}`);
+      setActionMessage(`Lỗi dọn Temp: ${e.message}`);
     }
   };
 
@@ -498,9 +526,19 @@ export const FileExplorerTree: React.FC = () => {
           <button
             onClick={handleSafeTrashAll}
             className="px-3.5 py-1.5 bg-rose-600/90 hover:bg-rose-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors shadow shadow-rose-950/40"
+            title="Dọn sạch toàn bộ tệp rác (.tmp, .log, .bak, thumbs.db...) trong thư mục này vào Recycle Bin"
           >
             <Trash2 className="w-3.5 h-3.5" />
             Dọn Sạch Rác (1-Click)
+          </button>
+
+          <button
+            onClick={handleCleanTempTool}
+            className="px-3.5 py-1.5 bg-amber-600/90 hover:bg-amber-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors shadow shadow-amber-950/40"
+            title="Khởi chạy C:\Tool\TempCleaner.exe để dọn sạch sâu toàn bộ bộ nhớ tạm (Temp) hệ thống"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            Dọn Sạch Temp (C:\Tool)
           </button>
 
           <button

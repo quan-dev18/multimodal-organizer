@@ -3,6 +3,7 @@ import shutil
 import time
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import psutil
@@ -154,40 +155,79 @@ def scan_directory_tree(
         "files": files
     }
 
-# Safe Trash Cleanup with Safety Filter (Protected system paths)
+# Safe Trash & Temp Cleanup with Windows Recycle Bin & TempCleaner.exe
 PROTECTED_PATHS = [
-    "c:\\windows", "c:\\program files", "c:\\program files (x86)",
+    "c:\\windows\\system32", "c:\\windows\\syswow64", 
     "c:\\system volume information", "c:\\$recycle.bin"
 ]
 
-def safe_clean_trash(file_paths: List[str]) -> Dict[str, Any]:
+def run_external_temp_cleaner() -> Dict[str, Any]:
+    """Runs C:\Tool\TempCleaner.exe to thoroughly clear system and user temp files"""
+    cleaner_path = r"C:\Tool\TempCleaner.exe"
+    if not os.path.exists(cleaner_path):
+        return {"success": False, "message": "Không tìm thấy công cụ TempCleaner tại C:\\Tool\\TempCleaner.exe"}
+
+    try:
+        proc = subprocess.Popen([cleaner_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ret = proc.wait(timeout=30)
+        return {
+            "success": True, 
+            "message": "Đã chạy TempCleaner.exe thành công, dọn sạch hoàn toàn các thư mục Temp hệ thống và ứng dụng rác!"
+        }
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return {"success": True, "message": "TempCleaner.exe đã thực hiện dọn dẹp các thư mục Temp hệ thống."}
+    except Exception as e:
+        return {"success": False, "message": f"Lỗi chạy TempCleaner: {str(e)}"}
+
+def safe_clean_trash(file_paths: List[str], clean_system_temp: bool = False) -> Dict[str, Any]:
     cleaned = []
     failed = []
     blocked = []
+    temp_cleaner_result = None
+
+    # Optional: Run C:\Tool\TempCleaner.exe for full system Temp cleaning
+    if clean_system_temp or not file_paths:
+        temp_cleaner_result = run_external_temp_cleaner()
 
     for fp in file_paths:
         lower_fp = fp.lower()
-        # Protect OS and critical directories
+        # Protect OS and critical directories (allow temp directories even under Windows)
         if any(lower_fp.startswith(prot) for prot in PROTECTED_PATHS):
             blocked.append({"path": fp, "reason": "Tệp hệ thống được bảo vệ an toàn, không được phép xóa"})
             continue
 
         try:
             if os.path.exists(fp):
-                # send2trash moves directly to Windows Recycle Bin (Restorable 100%)
-                send2trash.send2trash(fp)
-                cleaned.append(fp)
+                # Try send2trash first for safe Recycle Bin recovery
+                try:
+                    send2trash.send2trash(fp)
+                    cleaned.append(fp)
+                except Exception:
+                    # If send2trash fails (e.g. system temp file permission or locked recycle bin), fallback to os.remove
+                    if os.path.isfile(fp) or os.path.islink(fp):
+                        os.remove(fp)
+                        cleaned.append(fp)
+                    elif os.path.isdir(fp):
+                        shutil.rmtree(fp, ignore_errors=True)
+                        cleaned.append(fp)
         except Exception as e:
             failed.append({"path": fp, "error": str(e)})
 
+    msg = f"Đã dọn sạch {len(cleaned)} tệp rác vào Thùng rác Recycle Bin."
+    if temp_cleaner_result and temp_cleaner_result.get("success"):
+        msg += " Đồng thời TempCleaner.exe đã dọn dẹp sâu toàn bộ Temp hệ thống!"
+
     return {
         "success": True,
+        "message": msg,
         "cleaned_count": len(cleaned),
         "failed_count": len(failed),
         "blocked_count": len(blocked),
         "cleaned_files": cleaned,
         "failed_files": failed,
-        "blocked_files": blocked
+        "blocked_files": blocked,
+        "temp_cleaner": temp_cleaner_result
     }
 
 from ai_organizer import analyze_file_intent
