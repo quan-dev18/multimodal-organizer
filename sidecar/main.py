@@ -14,9 +14,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from hardware import get_hardware_info, check_ollama_status
 from models_catalog import get_all_model_clusters, get_flat_catalog
-from file_manager import scan_directory_tree, safe_clean_trash, organize_files_safe
+from file_manager import (
+    get_system_drives, 
+    scan_directory_tree, 
+    safe_clean_trash, 
+    generate_organize_preview, 
+    organize_files_safe, 
+    undo_last_organize
+)
 
-app = FastAPI(title="MMO Multimodal Core Engine", version="1.1.0")
+app = FastAPI(title="MMO Multimodal Core Engine", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,7 +38,7 @@ class PullRequest(BaseModel):
 
 class BenchmarkRequest(BaseModel):
     model_name: str
-    prompt: Optional[str] = "Phân tích và gán nhãn cho tài liệu: 'Bao_cao_NCKH_2026.docx'. Trả về JSON."
+    prompt: Optional[str] = "Phân loại tệp: 'Bao_cao_NCKH_2026.docx'. Trả về JSON."
 
 class ScanTreeRequest(BaseModel):
     directory: str
@@ -43,6 +50,10 @@ class DeepScanProgressRequest(BaseModel):
 class TrashRequest(BaseModel):
     file_paths: List[str]
 
+class OrganizePreviewRequest(BaseModel):
+    file_paths: List[str]
+    target_base: str
+
 class OrganizeRequest(BaseModel):
     file_paths: List[str]
     target_base: str
@@ -50,17 +61,21 @@ class OrganizeRequest(BaseModel):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "MMO Desktop Core 1.1"}
+    return {"status": "ok", "service": "MMO Desktop Core 1.2"}
 
 @app.get("/api/hardware")
 def api_hardware():
     return get_hardware_info()
 
+# New: System drives detection (C:, D:, USBs, external)
+@app.get("/api/system/drives")
+def api_system_drives():
+    return get_system_drives()
+
 @app.get("/api/ollama/status")
 def api_ollama_status():
     return check_ollama_status()
 
-# Return Model Clusters & Multi-model selection
 @app.get("/api/models/clusters")
 def api_models_clusters():
     return get_all_model_clusters()
@@ -125,12 +140,10 @@ def api_benchmark(req: BenchmarkRequest):
             "message": "Không kết nối được tới mô hình. Vui lòng bật Ollama và tải model."
         }
 
-# Explorer Tree Scanning (Folder inside folder)
 @app.post("/api/files/tree")
 def api_scan_tree(req: ScanTreeRequest):
     return scan_directory_tree(req.directory, req.include_hidden)
 
-# Deep Scan with Progress Stream & Time Estimation (Only runs when requested)
 @app.post("/api/files/deep_scan_stream")
 def api_deep_scan_stream(req: DeepScanProgressRequest):
     def scan_generator():
@@ -141,7 +154,6 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
         junk_count = 0
         hidden_count = 0
 
-        # Scan iteratively
         for dirpath, dirnames, filenames in os.walk(root_dir):
             current_folder = dirpath
             for fname in filenames:
@@ -153,18 +165,15 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
                 except:
                     pass
 
-                # Check junk
                 ext = os.path.splitext(fname)[1].lower().lstrip(".")
-                if ext in ["tmp", "log", "bak", "cache", "crdownload"] or fname.lower() in ["thumbs.db", ".ds_store"]:
+                if ext in ["tmp", "log", "bak", "cache", "crdownload", "chk"] or fname.lower() in ["thumbs.db", ".ds_store"]:
                     junk_count += 1
                 if fname.startswith("."):
                     hidden_count += 1
 
-                # Yield progress updates periodically
                 if scanned_count % 30 == 0 or scanned_count <= 10:
                     elapsed = time.time() - start_time
                     rate = scanned_count / elapsed if elapsed > 0 else 100
-                    # Estimated time left based on local folder density
                     est_time_sec = round(max(0.5, (100 - (scanned_count % 100)) / max(rate, 1)), 1)
                     
                     yield json.dumps({
@@ -194,11 +203,20 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
 def api_trash_files(req: TrashRequest):
     return safe_clean_trash(req.file_paths)
 
+# Dry-run Preview before Organize
+@app.post("/api/files/organize_preview")
+def api_organize_preview(req: OrganizePreviewRequest):
+    return generate_organize_preview(req.file_paths, req.target_base)
+
 @app.post("/api/files/organize")
 def api_organize_files(req: OrganizeRequest):
     return organize_files_safe(req.file_paths, req.target_base, req.mode)
 
-# Serve built frontend assets directly via HTTP at root
+# Undo Last Organize
+@app.post("/api/files/undo")
+def api_undo_organize():
+    return undo_last_organize()
+
 DIST_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
 if os.path.exists(DIST_DIR):
     app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="static")
