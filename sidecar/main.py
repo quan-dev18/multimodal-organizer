@@ -59,6 +59,12 @@ class OrganizeRequest(BaseModel):
     target_base: str
     mode: str = "copy"
 
+class DeleteModelRequest(BaseModel):
+    model_name: str
+
+class UpdateStoragePathRequest(BaseModel):
+    new_path: str
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "MMO Desktop Core 1.2"}
@@ -83,6 +89,52 @@ def api_models_clusters():
 @app.get("/api/models/catalog")
 def api_models_catalog():
     return get_flat_catalog()
+
+# Get Current Model Storage Path (OLLAMA_MODELS)
+@app.get("/api/models/storage_location")
+def api_get_storage_location():
+    path = os.environ.get("OLLAMA_MODELS")
+    if not path:
+        # Check User env in Windows registry
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
+                path, _ = winreg.QueryValueEx(key, "OLLAMA_MODELS")
+        except:
+            path = os.path.expandvars(r"%USERPROFILE%\.ollama\models")
+    return {"current_path": path, "default_c": os.path.expandvars(r"%USERPROFILE%\.ollama\models")}
+
+# Update Model Storage Location
+@app.post("/api/models/update_storage_location")
+def api_update_storage_location(req: UpdateStoragePathRequest):
+    new_dir = req.new_path.strip()
+    if not os.path.exists(new_dir):
+        try:
+            os.makedirs(new_dir, exist_ok=True)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Không thể tạo thư mục: {str(e)}")
+
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment", 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "OLLAMA_MODELS", 0, winreg.REG_SZ, new_dir)
+        os.environ["OLLAMA_MODELS"] = new_dir
+        return {"success": True, "new_path": new_dir, "message": "Đã đổi nơi lưu trữ mô hình thành công! Hãy khởi động lại Ollama để nhận đường dẫn mới."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi ghi cấu hình Registry: {str(e)}")
+
+# Delete Model via Ollama API
+@app.post("/api/models/delete")
+def api_delete_model(req: DeleteModelRequest):
+    ollama_url = "http://localhost:11434/api/delete"
+    try:
+        r = requests.delete(ollama_url, json={"name": req.model_name}, timeout=15)
+        if r.status_code == 200:
+            return {"success": True, "message": f"Đã xóa thành công mô hình {req.model_name} để giải phóng dung lượng!"}
+        else:
+            return {"success": False, "message": f"Ollama trả về mã lỗi: {r.status_code}"}
+    except Exception as e:
+        return {"success": False, "message": f"Lỗi xóa mô hình: {str(e)}"}
 
 @app.post("/api/ollama/pull")
 def api_ollama_pull(req: PullRequest):

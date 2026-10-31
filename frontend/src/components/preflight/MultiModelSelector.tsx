@@ -1,5 +1,5 @@
-import React from 'react';
-import { Download, CheckCircle, Layers, Check } from 'lucide-react';
+import React, { useState } from 'react';
+import { Download, CheckCircle, Check, Trash2, FolderEdit, HardDrive, Check as CheckIcon } from 'lucide-react';
 
 export interface ModelItem {
   id: string;
@@ -29,8 +29,11 @@ interface MultiModelSelectorProps {
   installedModels: string[];
   isDownloading: boolean;
   downloadProgress: string;
+  storagePath: string;
   onToggleModel: (model: ModelItem) => void;
   onDownloadModel: (modelTag: string) => void;
+  onDeleteModel: (modelTag: string) => void;
+  onUpdateStoragePath: (newPath: string) => void;
 }
 
 export const MultiModelSelector: React.FC<MultiModelSelectorProps> = ({
@@ -39,27 +42,80 @@ export const MultiModelSelector: React.FC<MultiModelSelectorProps> = ({
   installedModels,
   isDownloading,
   downloadProgress,
+  storagePath,
   onToggleModel,
-  onDownloadModel
+  onDownloadModel,
+  onDeleteModel,
+  onUpdateStoragePath
 }) => {
+  const [isEditingPath, setIsEditingPath] = useState(false);
+  const [customPath, setCustomPath] = useState(storagePath);
+
+  const handleSavePath = () => {
+    if (!customPath.trim()) return;
+    onUpdateStoragePath(customPath.trim());
+    setIsEditingPath(false);
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-base font-bold text-white flex items-center gap-2">
-            <Layers className="w-5 h-5 text-lime-400" />
-            Cụm Mô Hình AI Đa Phương Thức (Multi-Model System Architecture)
-          </h3>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Chọn tổ hợp nhiều mô hình phối hợp chạy đồng thời: SLM phân loại văn bản + Vision phân tích ảnh + BGE-M3 tạo vector nhúng.
-          </p>
+      {/* 1. Model Storage Location Setting Bar */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-md">
+        <div className="flex items-center gap-2 flex-1 min-w-[340px]">
+          <HardDrive className="w-4 h-4 text-lime-400 shrink-0" />
+          <span className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider shrink-0">
+            NƠI CÀI ĐẶT / LƯU TRỮ MODEL:
+          </span>
+
+          {isEditingPath ? (
+            <div className="flex items-center gap-2 flex-1">
+              <input
+                type="text"
+                value={customPath}
+                onChange={(e) => setCustomPath(e.target.value)}
+                placeholder="Nhập đường dẫn (ví dụ: D:\OllamaModels)..."
+                className="flex-1 bg-slate-950 border border-slate-700 rounded px-2.5 py-1 text-xs text-lime-400 font-mono focus:outline-none focus:border-lime-500"
+              />
+              <button
+                onClick={handleSavePath}
+                className="px-2.5 py-1 bg-lime-500 hover:bg-lime-400 text-slate-950 font-bold rounded text-xs flex items-center gap-1"
+              >
+                <CheckIcon className="w-3.5 h-3.5" /> Lưu
+              </button>
+              <button
+                onClick={() => {
+                  setCustomPath(storagePath);
+                  setIsEditingPath(false);
+                }}
+                className="px-2.5 py-1 bg-slate-800 text-slate-400 hover:text-white rounded text-xs"
+              >
+                Hủy
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 flex-1">
+              <span className="bg-slate-950 border border-slate-800 rounded px-3 py-1 text-xs font-mono text-lime-400 truncate max-w-md">
+                {storagePath || "D:\\OllamaModels"}
+              </span>
+              <button
+                onClick={() => {
+                  setCustomPath(storagePath || "D:\\OllamaModels");
+                  setIsEditingPath(true);
+                }}
+                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs flex items-center gap-1.5 transition-colors font-mono"
+              >
+                <FolderEdit className="w-3.5 h-3.5 text-amber-400" /> Đổi Nơi Cài Đặt
+              </button>
+            </div>
+          )}
         </div>
-        <div className="text-xs font-mono text-lime-400 bg-lime-950/40 border border-lime-800/80 px-3 py-1 rounded-full">
-          Đang chọn: <b>{selectedModelIds.size}</b> mô hình phối hợp
+
+        <div className="text-[11px] font-mono text-slate-400 bg-slate-950 px-2.5 py-1 rounded border border-slate-800">
+          Đang chọn: <b className="text-lime-400">{selectedModelIds.size}</b> mô hình
         </div>
       </div>
 
-      {/* Render Clusters */}
+      {/* 2. Model Clusters Grid */}
       <div className="space-y-5">
         {clusters.map((cluster) => (
           <div key={cluster.cluster_id} className="bg-slate-900/60 border border-slate-800 rounded-xl p-4">
@@ -77,7 +133,7 @@ export const MultiModelSelector: React.FC<MultiModelSelectorProps> = ({
               </span>
             </div>
 
-            {/* Model Cards in Cluster */}
+            {/* Model Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
               {cluster.models.map((m) => {
                 const isSelected = selectedModelIds.has(m.id);
@@ -94,7 +150,7 @@ export const MultiModelSelector: React.FC<MultiModelSelectorProps> = ({
                         : 'bg-slate-950/80 border-slate-800 hover:border-slate-700 hover:bg-slate-900/60'
                     }`}
                   >
-                    {/* Header: Checkbox + Badge */}
+                    {/* Header */}
                     <div className="flex items-center justify-between mb-2">
                       <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
                         isSelected ? 'bg-lime-500 border-lime-400 text-slate-950' : 'border-slate-700 bg-slate-900'
@@ -109,7 +165,7 @@ export const MultiModelSelector: React.FC<MultiModelSelectorProps> = ({
                       </span>
                     </div>
 
-                    {/* Name & Params */}
+                    {/* Info */}
                     <div>
                       <div className="font-semibold text-slate-100 text-xs flex items-center justify-between">
                         <span className="truncate pr-1">{m.name}</span>
@@ -119,16 +175,30 @@ export const MultiModelSelector: React.FC<MultiModelSelectorProps> = ({
                       </p>
                     </div>
 
-                    {/* Footer */}
+                    {/* Footer Actions: Download & Delete Model */}
                     <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[11px] font-mono">
                       <span className={isHeavy ? "text-rose-400 font-bold" : "text-lime-400 font-bold"}>
                         ~{m.est_vram_gb} GB
                       </span>
 
                       {isInstalled ? (
-                        <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-sans font-medium">
-                          <CheckCircle className="w-3 h-3" /> Đã tải
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-sans font-medium">
+                            <CheckCircle className="w-3 h-3" /> Đã tải
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Xác nhận xóa mô hình ${m.name} (${m.tag}) để giải phóng dung lượng ổ đĩa?`)) {
+                                onDeleteModel(m.tag);
+                              }
+                            }}
+                            title="Xóa mô hình này để giải phóng dung lượng"
+                            className="p-1 hover:bg-rose-900/60 text-slate-500 hover:text-rose-400 rounded transition-colors"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
                       ) : (
                         <button
                           onClick={(e) => {
@@ -150,7 +220,7 @@ export const MultiModelSelector: React.FC<MultiModelSelectorProps> = ({
         ))}
       </div>
 
-      {/* Download Stream Alert */}
+      {/* Download Alert */}
       {isDownloading && (
         <div className="bg-slate-900 border border-lime-500 rounded-xl p-3.5 flex items-center gap-3">
           <Download className="w-5 h-5 text-lime-400 animate-bounce" />
