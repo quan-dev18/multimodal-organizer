@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { VramGauge } from './components/preflight/VramGauge';
 import { MultiModelSelector } from './components/preflight/MultiModelSelector';
-import type { ModelItem, ModelCluster } from './components/preflight/MultiModelSelector';
+import type { ModelItem, ModelCluster, BatchDownloadStatus } from './components/preflight/MultiModelSelector';
 import { BenchmarkCard } from './components/preflight/BenchmarkCard';
 import { MainApp } from './components/main/MainApp';
-import { ArrowRight, AlertCircle, RefreshCw } from 'lucide-react';
+import { ArrowRight, RefreshCw } from 'lucide-react';
 
 const API_BASE = "http://127.0.0.1:8001/api";
 
@@ -16,15 +16,27 @@ export function App() {
   const [flatCatalog, setFlatCatalog] = useState<ModelItem[]>([]);
   const [storagePath, setStoragePath] = useState<string>("D:\\OllamaModels");
   
+  // Selected models
   const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(
-    new Set(["qwen2.5:1.5b", "moondream", "bge-m3"])
+    new Set(["qwen2.5:1.5b", "bge-m3"])
   );
 
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState("");
+  // Batch download state
+  const [batchStatus, setBatchStatus] = useState<BatchDownloadStatus>({
+    isDownloading: false,
+    currentModelTag: "",
+    currentIndex: 0,
+    totalModels: 0,
+    progressPercent: 0,
+    statusText: "",
+    elapsedSeconds: 0,
+    estimatedSecondsLeft: 0,
+    speedMbps: 0
+  });
+
   const [loadingHardware, setLoadingHardware] = useState(true);
 
-  // Fetch Hardware, Clusters, and Storage Path
+  // Fetch Hardware & Clusters
   const refreshSystemInfo = async () => {
     setLoadingHardware(true);
     try {
@@ -42,7 +54,7 @@ export function App() {
       if (catRes && catRes.length > 0) setFlatCatalog(catRes);
       if (pathRes && pathRes.current_path) setStoragePath(pathRes.current_path);
     } catch (e) {
-      console.error("Lỗi kết nối sidecar", e);
+      console.error("Lỗi kết nối", e);
     } finally {
       setLoadingHardware(false);
     }
@@ -64,48 +76,171 @@ export function App() {
     setSelectedModelIds(next);
   };
 
-  // Download / Pull model
-  const handleDownloadModel = async (modelTag: string) => {
-    setIsDownloading(true);
-    setDownloadProgress(`Đang kết nối tải ${modelTag}...`);
+  // Open native Windows folder selector dialog
+  const handleOpenFolderPicker = async () => {
     try {
-      const response = await fetch(`${API_BASE}/ollama/pull`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_name: modelTag })
-      });
+      const res = await fetch(`${API_BASE}/system/select_folder`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success && data.path) {
+        // Update storage location
+        const updateRes = await fetch(`${API_BASE}/models/update_storage_location`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_path: data.path })
+        });
+        await updateRes.json();
+        setStoragePath(data.path);
+        alert(`Đã chọn thư mục cài đặt mô hình: ${data.path}`);
+        await refreshSystemInfo();
+      }
+    } catch (e: any) {
+      alert(`Lỗi chọn thư mục: ${e.message}`);
+    }
+  };
 
-      if (!response.body) throw new Error("Không có phản hồi");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
+  // Single Model Download logic
+  const downloadOneModel = async (modelTag: string, onProgress: (percent: number, status: string, speed: number, estLeft: number) => void) => {
+    const startTime = Date.now();
+    let lastBytes = 0;
+    let lastTime = startTime;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+    const response = await fetch(`${API_BASE}/ollama/pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_name: modelTag })
+    });
 
-        const text = decoder.decode(value);
-        const lines = text.split('\n').filter(Boolean);
-        for (const line of lines) {
-          try {
-            const data = JSON.parse(line);
-            if (data.status) {
-              if (data.completed && data.total) {
-                const percent = Math.round((data.completed / data.total) * 100);
-                setDownloadProgress(`${data.status} (${percent}%)`);
-              } else {
-                setDownloadProgress(data.status);
+    if (!response.body) throw new Error("Không có phản hồi từ máy chủ");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const text = decoder.decode(value);
+      const lines = text.split('\n').filter(Boolean);
+      for (const line of lines) {
+        try {
+          const data = JSON.parse(line);
+          if (data.status) {
+            let percent = 0;
+            let speedMbps = 0;
+            let estLeft = 0;
+
+            if (data.completed && data.total) {
+              percent = Math.round((data.completed / data.total) * 100);
+              const now = Date.now();
+              const timeDiff = (now - lastTime) / 1000;
+              if (timeDiff > 0.5) {
+                const bytesDiff = data.completed - lastBytes;
+                speedMbps = (bytesDiff / (1024 * 1024)) / timeDiff;
+                const remainingBytes = data.total - data.completed;
+                estLeft = speedMbps > 0 ? Math.round((remainingBytes / (1024 * 1024)) / speedMbps) : 0;
+                lastBytes = data.completed;
+                lastTime = now;
               }
             }
-          } catch {}
-        }
+            onProgress(percent, data.status, speedMbps, estLeft);
+          }
+        } catch {}
+      }
+    }
+  };
+
+  // Batch Download all uninstalled models sequentially
+  const handleDownloadAllSelected = async () => {
+    const installedList: string[] = ollamaStatus?.models?.map((m: any) => m.name) || [];
+    const modelsToDownload = flatCatalog.filter(
+      m => selectedModelIds.has(m.id) && !installedList.some(tag => tag.includes(m.tag) || m.tag.includes(tag))
+    );
+
+    if (modelsToDownload.length === 0) {
+      alert("Tất cả các mô hình bạn chọn đều đã được tải về sẵn!");
+      return;
+    }
+
+    setBatchStatus({
+      isDownloading: true,
+      currentModelTag: modelsToDownload[0].tag,
+      currentIndex: 1,
+      totalModels: modelsToDownload.length,
+      progressPercent: 0,
+      statusText: "Bắt đầu tải tuần tự...",
+      elapsedSeconds: 0,
+      estimatedSecondsLeft: 60,
+      speedMbps: 0
+    });
+
+    const globalStartTime = Date.now();
+    const timerInterval = setInterval(() => {
+      setBatchStatus(prev => ({
+        ...prev,
+        elapsedSeconds: Math.round((Date.now() - globalStartTime) / 1000)
+      }));
+    }, 1000);
+
+    try {
+      for (let i = 0; i < modelsToDownload.length; i++) {
+        const m = modelsToDownload[i];
+        setBatchStatus(prev => ({
+          ...prev,
+          currentModelTag: m.tag,
+          currentIndex: i + 1,
+          progressPercent: 0,
+          statusText: `Đang tải ${m.name} (${m.tag})...`
+        }));
+
+        await downloadOneModel(m.tag, (percent, status, speed, estLeft) => {
+          setBatchStatus(prev => ({
+            ...prev,
+            progressPercent: percent || prev.progressPercent,
+            statusText: status,
+            speedMbps: speed > 0 ? speed : prev.speedMbps,
+            estimatedSecondsLeft: estLeft > 0 ? estLeft : prev.estimatedSecondsLeft
+          }));
+        });
       }
 
-      setDownloadProgress("Hoàn tất tải về!");
+      alert("Đã hoàn tất tải tất cả các mô hình thành công!");
       await refreshSystemInfo();
     } catch (err: any) {
-      setDownloadProgress(`Lỗi tải về: ${err.message}`);
+      alert(`Lỗi trong quá trình tải: ${err.message}`);
     } finally {
-      setIsDownloading(false);
+      clearInterval(timerInterval);
+      setBatchStatus(prev => ({ ...prev, isDownloading: false }));
+    }
+  };
+
+  // Download single model
+  const handleDownloadSingleModel = async (modelTag: string) => {
+    setBatchStatus({
+      isDownloading: true,
+      currentModelTag: modelTag,
+      currentIndex: 1,
+      totalModels: 1,
+      progressPercent: 0,
+      statusText: `Bắt đầu tải ${modelTag}...`,
+      elapsedSeconds: 0,
+      estimatedSecondsLeft: 30,
+      speedMbps: 0
+    });
+
+    try {
+      await downloadOneModel(modelTag, (percent, status, speed, estLeft) => {
+        setBatchStatus(prev => ({
+          ...prev,
+          progressPercent: percent || prev.progressPercent,
+          statusText: status,
+          speedMbps: speed > 0 ? speed : prev.speedMbps,
+          estimatedSecondsLeft: estLeft > 0 ? estLeft : prev.estimatedSecondsLeft
+        }));
+      });
+      await refreshSystemInfo();
+    } catch (err: any) {
+      alert(`Lỗi tải: ${err.message}`);
+    } finally {
+      setBatchStatus(prev => ({ ...prev, isDownloading: false }));
     }
   };
 
@@ -125,23 +260,6 @@ export function App() {
     }
   };
 
-  // Update storage location
-  const handleUpdateStoragePath = async (newPath: string) => {
-    try {
-      const res = await fetch(`${API_BASE}/models/update_storage_location`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ new_path: newPath })
-      });
-      const data = await res.json();
-      alert(data.message);
-      setStoragePath(newPath);
-      await refreshSystemInfo();
-    } catch (e: any) {
-      alert(`Lỗi cập nhật nơi lưu trữ: ${e.message}`);
-    }
-  };
-
   // Run Benchmark
   const handleRunBenchmark = async (modelTag: string) => {
     const res = await fetch(`${API_BASE}/models/benchmark`, {
@@ -153,7 +271,7 @@ export function App() {
   };
 
   const totalVram = hardware?.gpu?.total_vram_gb || 4.0;
-  const usedVramOther = hardware?.gpu?.used_vram_gb ? Math.max(hardware.gpu.used_vram_gb - 1.6, 0.8) : 1.32;
+  const usedVramOther = hardware?.gpu?.used_vram_gb ? Math.max(hardware.gpu.used_vram_gb - 1.6, 0.8) : 0.8;
   const gpuName = hardware?.gpu?.name || "NVIDIA GeForce GTX 1650";
 
   const selectedModelsList = flatCatalog.filter(m => selectedModelIds.has(m.id));
@@ -186,7 +304,7 @@ export function App() {
               <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">PHASE 2 - 3</span>
             </div>
             <p className="text-xs text-slate-400">
-              Quản lý nơi lưu trữ, xóa mô hình, cấu hình cụm AI & đo VRAM thực tế trên card GTX 1650
+              Chọn thư mục cài đặt mô hình qua cửa sổ Windows, theo dõi thanh VRAM cố định & tải tự động tuần tự
             </p>
           </div>
         </div>
@@ -213,8 +331,8 @@ export function App() {
 
       {/* Main Content Area */}
       <main className="space-y-6 my-6">
-        {/* 1. Combined VRAM Gauge Bar */}
-        <section>
+        {/* 1. STICKY VRAM GAUGE BAR: Luôn ghim cố định trên màn hình để quan sát khi chọn model */}
+        <div className="sticky top-4 z-40 shadow-2xl">
           <VramGauge
             totalVramGb={totalVram}
             usedVramOtherGb={usedVramOther}
@@ -222,34 +340,21 @@ export function App() {
             appName={`Cụm ${selectedModelIds.size} Mô Hình MMO`}
             gpuName={gpuName}
           />
-        </section>
+        </div>
 
-        {/* Ollama Alert if not running */}
-        {ollamaStatus && !ollamaStatus.installed_or_running && (
-          <div className="bg-amber-950/40 border border-amber-800/60 rounded-xl p-4 flex items-start gap-3 text-xs text-amber-200">
-            <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-semibold text-amber-300">Ollama đang kết nối:</span>
-              <p className="mt-1 text-slate-300 leading-relaxed">
-                Đang nạp mô hình từ kho <b>{storagePath}</b>. Bạn có thể xóa bớt mô hình không dùng hoặc chọn lại nơi lưu trữ ở bên dưới.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* 2. Multi-Model Cluster Selection with Delete & Storage Path Selector */}
+        {/* 2. Multi-Model Cluster Selection with Native Folder Picker & Download All */}
         <section>
           <MultiModelSelector
             clusters={clusters}
             selectedModelIds={selectedModelIds}
             installedModels={installedModelsList}
-            isDownloading={isDownloading}
-            downloadProgress={downloadProgress}
+            batchStatus={batchStatus}
             storagePath={storagePath}
             onToggleModel={handleToggleModel}
-            onDownloadModel={handleDownloadModel}
+            onDownloadAllSelected={handleDownloadAllSelected}
+            onDownloadSingleModel={handleDownloadSingleModel}
             onDeleteModel={handleDeleteModel}
-            onUpdateStoragePath={handleUpdateStoragePath}
+            onOpenFolderPicker={handleOpenFolderPicker}
           />
         </section>
 
@@ -271,7 +376,7 @@ export function App() {
           <span>CPU: <b className="text-slate-400 font-sans">{hardware?.cpu?.logical_cores || 8} Luồng</b></span>
         </div>
         <div className="text-slate-600">
-          MMO Multimodal Organizer v1.3 · Quản Lý Nơi Cài Đặt & Xóa Model
+          MMO Multimodal Organizer v1.4 · Sticky VRAM & Sequential Batch Download
         </div>
       </footer>
     </div>

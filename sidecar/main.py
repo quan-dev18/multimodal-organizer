@@ -123,6 +123,25 @@ def api_update_storage_location(req: UpdateStoragePathRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi ghi cấu hình Registry: {str(e)}")
 
+# Select Folder Dialog via Native Windows Picker (Tkinter)
+@app.post("/api/system/select_folder")
+def api_select_folder():
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        folder_selected = filedialog.askdirectory(title="Chọn thư mục cài đặt / lưu trữ mô hình Ollama")
+        root.destroy()
+        if folder_selected:
+            # Normalize path on Windows
+            folder_selected = os.path.normpath(folder_selected)
+            return {"success": True, "path": folder_selected}
+        return {"success": False, "message": "Người dùng đã hủy chọn thư mục."}
+    except Exception as e:
+        return {"success": False, "message": f"Lỗi mở hộp thoại: {str(e)}"}
+
 # Delete Model via Ollama API
 @app.post("/api/models/delete")
 def api_delete_model(req: DeleteModelRequest):
