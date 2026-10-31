@@ -315,11 +315,20 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
 def api_trash_files(req: TrashRequest):
     return safe_clean_trash(req.file_paths, req.clean_system_temp)
 
-# Run TempCleaner tool directly
+class CleanTempRequest(BaseModel):
+    zones: Optional[List[str]] = None
+
+# Built-in Dedicated Temp Cleaner API
+@app.get("/api/system/temp_status")
+def api_get_temp_status():
+    from file_manager import get_system_temp_status
+    return get_system_temp_status()
+
 @app.post("/api/system/clean_temp")
-def api_clean_system_temp():
-    from file_manager import run_external_temp_cleaner
-    return run_external_temp_cleaner()
+def api_clean_system_temp(req: Optional[CleanTempRequest] = None):
+    from file_manager import clean_system_temp_native
+    target_zones = req.zones if req else None
+    return clean_system_temp_native(target_zones)
 
 @app.post("/api/files/organize")
 def api_organize_files(req: OrganizeRequest):

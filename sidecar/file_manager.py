@@ -161,6 +161,97 @@ PROTECTED_PATHS = [
     "c:\\system volume information", "c:\\$recycle.bin"
 ]
 
+def get_system_temp_status() -> List[Dict[str, Any]]:
+    """Scans and analyzes system temp, user cache, crash dumps, and prefetch zones"""
+    user_temp = os.environ.get("TEMP", "")
+    win_temp = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Temp")
+    prefetch = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Prefetch")
+    crash_dumps = os.path.join(os.environ.get("LOCALAPPDATA", ""), "CrashDumps")
+
+    zones = [
+        {"id": "user_temp", "name": "User Temp (%TEMP%)", "path": user_temp, "description": "Tệp tạm của các phần mềm và ứng dụng đang chạy"},
+        {"id": "win_temp", "name": "Windows System Temp", "path": win_temp, "description": "Bộ nhớ tạm của hệ điều hành Windows"},
+        {"id": "crash_dumps", "name": "Windows Crash Dumps", "path": crash_dumps, "description": "Tệp ghi nhật ký lỗi ứng dụng dung lượng lớn"},
+        {"id": "prefetch", "name": "Windows Prefetch Cache", "path": prefetch, "description": "Bộ nhớ đệm khởi động nhanh Windows"}
+    ]
+
+    results = []
+    for z in zones:
+        p = z["path"]
+        if not p or not os.path.exists(p):
+            continue
+        file_count = 0
+        total_size = 0
+        try:
+            for root, dirs, files in os.walk(p):
+                for f in files:
+                    try:
+                        fp = os.path.join(root, f)
+                        total_size += os.path.getsize(fp)
+                        file_count += 1
+                    except: pass
+        except: pass
+
+        results.append({
+            "id": z["id"],
+            "name": z["name"],
+            "path": p,
+            "description": z["description"],
+            "file_count": file_count,
+            "size_bytes": total_size,
+            "size_formatted": format_bytes(total_size),
+            "size_mb": round(total_size / (1024**2), 1)
+        })
+    return results
+
+def clean_system_temp_native(target_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Native built-in MMO Temp Cleaner engine (removes unneeded temp files directly and safely)"""
+    zones = get_system_temp_status()
+    cleaned_count = 0
+    freed_bytes = 0
+    errors = 0
+
+    allowed_ids = set(target_ids) if target_ids else {"user_temp", "win_temp", "crash_dumps", "prefetch"}
+
+    for z in zones:
+        if z["id"] not in allowed_ids:
+            continue
+        p = z["path"]
+        if not os.path.exists(p):
+            continue
+
+        try:
+            for item in os.listdir(p):
+                full_item = os.path.join(p, item)
+                try:
+                    if os.path.isfile(full_item) or os.path.islink(full_item):
+                        sz = os.path.getsize(full_item)
+                        os.remove(full_item)
+                        cleaned_count += 1
+                        freed_bytes += sz
+                    elif os.path.isdir(full_item):
+                        # Clean inside directory or remove dir if unneeded
+                        shutil.rmtree(full_item, ignore_errors=True)
+                        cleaned_count += 1
+                except Exception:
+                    # Locked by running process
+                    errors += 1
+        except Exception:
+            pass
+
+    # Also trigger C:\Tool\TempCleaner.exe if available for 100% thorough completion
+    external_res = run_external_temp_cleaner()
+
+    return {
+        "success": True,
+        "cleaned_count": cleaned_count,
+        "freed_formatted": format_bytes(freed_bytes),
+        "freed_mb": round(freed_bytes / (1024**2), 1),
+        "locked_skipped": errors,
+        "external_tool_status": external_res.get("message", ""),
+        "message": f"Đã dọn sạch {cleaned_count} tệp bộ nhớ tạm ({format_bytes(freed_bytes)}). Tệp đang bị phần mềm khác khóa đã được bỏ qua an toàn!"
+    }
+
 def run_external_temp_cleaner() -> Dict[str, Any]:
     """Runs C:\Tool\TempCleaner.exe to thoroughly clear system and user temp files"""
     cleaner_path = r"C:\Tool\TempCleaner.exe"

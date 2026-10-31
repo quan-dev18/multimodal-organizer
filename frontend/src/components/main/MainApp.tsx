@@ -7,9 +7,11 @@ import {
   HardDrive, 
   Cpu,
   FolderOpen,
-  ShieldCheck
+  ShieldCheck,
+  Zap
 } from 'lucide-react';
 import { FileExplorerTree } from './FileExplorerTree';
+import { DedicatedTempCleaner } from './DedicatedTempCleaner';
 
 interface MainAppProps {
   onBackToPreflight: () => void;
@@ -17,7 +19,7 @@ interface MainAppProps {
 }
 
 export const MainApp: React.FC<MainAppProps> = ({ onBackToPreflight, activeModelNames }) => {
-  const [activeTab, setActiveTab] = useState<'files' | 'dashboard' | 'organize' | 'storage' | 'search' | 'insights'>('files');
+  const [activeTab, setActiveTab] = useState<'files' | 'temp_cleaner' | 'dashboard' | 'organize' | 'storage' | 'search' | 'insights'>('files');
 
   return (
     <div className="flex h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
@@ -43,6 +45,15 @@ export const MainApp: React.FC<MainAppProps> = ({ onBackToPreflight, activeModel
               }`}
             >
               <FolderOpen className="w-4 h-4" /> Cây Thư Mục & Quản Lý File
+            </button>
+
+            <button
+              onClick={() => setActiveTab('temp_cleaner')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
+                activeTab === 'temp_cleaner' ? 'bg-amber-500/15 text-amber-400 border border-amber-500/40 shadow-sm shadow-amber-950' : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+              }`}
+            >
+              <Zap className="w-4 h-4 text-amber-400" /> Công Cụ Dọn Temp & Rác Hệ Thống
             </button>
 
             <button
@@ -145,6 +156,9 @@ export const MainApp: React.FC<MainAppProps> = ({ onBackToPreflight, activeModel
 
         {/* Tab 1: File Explorer Tree */}
         {activeTab === 'files' && <FileExplorerTree />}
+
+        {/* Tab: Dedicated System & App Temp Cleaner */}
+        {activeTab === 'temp_cleaner' && <DedicatedTempCleaner />}
 
         {/* Tab 2: Dashboard */}
         {activeTab === 'dashboard' && (
