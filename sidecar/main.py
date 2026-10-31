@@ -220,10 +220,31 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
     def scan_generator():
         root_dir = req.directory
         start_time = time.time()
+        
+        # Phase 1: Quick tree estimation (count top level items to estimate depth)
+        estimated_total_files = 0
+        try:
+            # For whole drive (C:\, D:\), sample reasonable baseline based on drive usage
+            if len(root_dir.rstrip("\\")) <= 2:
+                # Root drive scan: C:\ or D:\
+                import psutil
+                usage = psutil.disk_usage(root_dir)
+                # Average file size ~300KB
+                estimated_total_files = max(int((usage.used / 1024) / 350), 50000)
+            else:
+                # Count files in immediate 2 levels
+                for root, dirs, files in os.walk(root_dir):
+                    estimated_total_files += len(files)
+                    if estimated_total_files > 50000:
+                        break
+        except:
+            estimated_total_files = 30000
+
         scanned_count = 0
         total_bytes = 0
         junk_count = 0
         hidden_count = 0
+        junk_paths = []
 
         for dirpath, dirnames, filenames in os.walk(root_dir):
             current_folder = dirpath
@@ -237,16 +258,28 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
                     pass
 
                 ext = os.path.splitext(fname)[1].lower().lstrip(".")
-                if ext in ["tmp", "log", "bak", "cache", "crdownload", "chk"] or fname.lower() in ["thumbs.db", ".ds_store"]:
+                is_junk = ext in ["tmp", "log", "bak", "cache", "crdownload", "chk", "dmp"] or fname.lower() in ["thumbs.db", ".ds_store", "desktop.ini"] or fname.startswith("~$")
+                if is_junk:
                     junk_count += 1
+                    if len(junk_paths) < 1000:
+                        junk_paths.append(fpath)
+
                 if fname.startswith("."):
                     hidden_count += 1
 
-                if scanned_count % 30 == 0 or scanned_count <= 10:
-                    elapsed = time.time() - start_time
-                    rate = scanned_count / elapsed if elapsed > 0 else 100
-                    est_time_sec = round(max(0.5, (100 - (scanned_count % 100)) / max(rate, 1)), 1)
+                # Update progress every 80 items
+                if scanned_count % 80 == 0 or scanned_count <= 20:
+                    elapsed = max(time.time() - start_time, 0.1)
+                    speed_files_per_sec = scanned_count / elapsed
                     
+                    # Dynamically adjust total estimate if exceeded
+                    if scanned_count >= estimated_total_files:
+                        estimated_total_files = int(scanned_count * 1.3)
+
+                    percent = min(round((scanned_count / max(estimated_total_files, 1)) * 100, 1), 99.0)
+                    remaining_files = max(estimated_total_files - scanned_count, 0)
+                    est_time_sec = round(remaining_files / max(speed_files_per_sec, 1), 1)
+
                     yield json.dumps({
                         "type": "progress",
                         "scanned_count": scanned_count,
@@ -255,7 +288,9 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
                         "junk_count": junk_count,
                         "hidden_count": hidden_count,
                         "elapsed_seconds": round(elapsed, 1),
-                        "estimated_seconds_left": est_time_sec
+                        "estimated_seconds_left": est_time_sec,
+                        "percent": percent,
+                        "speed": round(speed_files_per_sec)
                     }) + "\n"
 
         elapsed_total = round(time.time() - start_time, 2)
@@ -265,7 +300,8 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
             "total_bytes": total_bytes,
             "junk_count": junk_count,
             "hidden_count": hidden_count,
-            "elapsed_seconds": elapsed_total
+            "elapsed_seconds": elapsed_total,
+            "junk_samples": junk_paths[:100]
         }) + "\n"
 
     return StreamingResponse(scan_generator(), media_type="application/x-ndjson")

@@ -63,6 +63,8 @@ interface ScanProgress {
   hidden_count: number;
   elapsed_seconds: number;
   estimated_seconds_left: number;
+  percent?: number;
+  speed?: number;
 }
 
 interface PreviewItem {
@@ -183,18 +185,18 @@ export const FileExplorerTree: React.FC = () => {
     }
   };
 
-  // Safe Trash Action (Recycle Bin with Protected OS paths safety)
-  const handleSafeTrash = async () => {
-    const targets = selectedPaths.size > 0 
-      ? Array.from(selectedPaths)
-      : files.filter(f => f.is_junk).map(f => f.path);
+  // Safe Trash Action (Recycle Bin) - 1-Click Cleans ALL detected junk automatically!
+  const handleSafeTrashAll = async () => {
+    // If user checked items, clean those. Otherwise, automatically find and clean ALL junk files in current folder!
+    const junkFiles = files.filter(f => f.is_junk).map(f => f.path);
+    const targets = selectedPaths.size > 0 ? Array.from(selectedPaths) : junkFiles;
 
     if (targets.length === 0) {
-      alert("Không có tệp nào được chọn.");
+      alert("Không phát hiện tệp rác nào trong thư mục này cần dọn dẹp!");
       return;
     }
 
-    if (!confirm(`Chuyển an toàn ${targets.length} tệp vào Thùng rác Windows Recycle Bin? (Có thể khôi phục bất cứ lúc nào)`)) {
+    if (!confirm(`Xác nhận 1-Click dọn sạch toàn bộ ${targets.length} tệp rác vào Thùng rác Windows Recycle Bin? (An toàn 100%, có thể khôi phục lại bất kỳ lúc nào)`)) {
       return;
     }
 
@@ -206,9 +208,9 @@ export const FileExplorerTree: React.FC = () => {
       });
       const data = await res.json();
       if (data.blocked_count > 0) {
-        setActionMessage(`Đã bảo vệ an toàn ${data.blocked_count} tệp hệ thống Windows. Đã dọn dẹp ${data.cleaned_count} tệp rác vào Recycle Bin.`);
+        setActionMessage(`Đã bảo vệ an toàn ${data.blocked_count} tệp hệ thống Windows. Đã dọn sạch ${data.cleaned_count} tệp rác vào Recycle Bin.`);
       } else {
-        setActionMessage(`Đã chuyển an toàn ${data.cleaned_count} tệp vào Thùng rác Windows!`);
+        setActionMessage(`Đã dọn sạch ${data.cleaned_count} tệp rác vào Thùng rác Recycle Bin thành công!`);
       }
       loadDirectory(currentPath);
     } catch (e: any) {
@@ -216,14 +218,13 @@ export const FileExplorerTree: React.FC = () => {
     }
   };
 
-  // 1. Dry-Run Preview before Organize (Xem trước đường dẫn & xung đột trước khi làm thật)
+  // 1. Dry-Run Preview before Organize (Tự động gom TOÀN BỘ file hợp lệ trong thư mục nếu không chọn thủ công)
   const handleOpenOrganizePreview = async () => {
-    const targets = selectedPaths.size > 0 
-      ? Array.from(selectedPaths)
-      : files.filter(f => !f.is_junk).map(f => f.path);
+    const validFiles = files.filter(f => !f.is_junk && !f.is_hidden).map(f => f.path);
+    const targets = selectedPaths.size > 0 ? Array.from(selectedPaths) : validFiles;
 
     if (targets.length === 0) {
-      alert("Vui lòng chọn ít nhất 1 tệp để sắp xếp.");
+      alert("Thư mục này không có tệp tin nào để sắp xếp.");
       return;
     }
 
@@ -401,32 +402,33 @@ export const FileExplorerTree: React.FC = () => {
           <div className="h-4 w-px bg-slate-800 mx-1"></div>
 
           <button
-            onClick={handleSafeTrash}
-            className="px-3 py-1.5 bg-rose-600/90 hover:bg-rose-500 text-white font-semibold rounded-lg text-xs flex items-center gap-1.5 transition-colors shadow"
+            onClick={handleSafeTrashAll}
+            className="px-3.5 py-1.5 bg-rose-600/90 hover:bg-rose-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors shadow shadow-rose-950/40"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            Dọn Vào Thùng Rác
+            Dọn Sạch Rác (1-Click)
           </button>
 
           <button
             onClick={handleOpenOrganizePreview}
-            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors shadow"
+            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors shadow shadow-emerald-950/40"
           >
             <FolderCheck className="w-3.5 h-3.5" />
-            Sắp Xếp An Toàn (Xem Trước)
+            Sắp Xếp Toàn Bộ Thư Mục
           </button>
         </div>
       </div>
 
-      {/* 3. Deep Scan Progress Bar */}
+      {/* 3. Deep Scan Progress Bar with dynamic percentage and accurate countdown */}
       {isDeepScanning && scanProgress && (
-        <div className="bg-slate-900 border border-lime-500/80 rounded-xl p-4 space-y-2 shrink-0">
+        <div className="bg-slate-900 border border-lime-500/80 rounded-xl p-4 space-y-2.5 shrink-0 shadow-2xl">
           <div className="flex items-center justify-between text-xs font-mono">
             <span className="text-lime-400 flex items-center gap-2 font-bold">
-              <span className="w-2 h-2 rounded-full bg-lime-400 animate-ping"></span>
-              ĐANG QUÉT: {scanProgress.scanned_count} tệp tin
+              <span className="w-2.5 h-2.5 rounded-full bg-lime-400 animate-ping"></span>
+              ĐANG QUÉT: {scanProgress.scanned_count.toLocaleString()} tệp tin
+              {scanProgress.speed ? <span className="text-slate-400 font-normal">({scanProgress.speed.toLocaleString()} tệp/giây)</span> : null}
             </span>
-            <div className="flex items-center gap-4 text-slate-400">
+            <div className="flex items-center gap-4 text-slate-300">
               <span className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 text-amber-400" />
                 Đã chạy: <b className="text-white">{scanProgress.elapsed_seconds}s</b>
@@ -437,13 +439,20 @@ export const FileExplorerTree: React.FC = () => {
             </div>
           </div>
 
-          <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-            <div className="h-full bg-lime-500 animate-pulse rounded-full" style={{ width: '70%' }}></div>
+          {/* Dynamic Progress Bar */}
+          <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800 p-0.5">
+            <div 
+              className="h-full bg-gradient-to-r from-lime-500 to-emerald-400 rounded-full transition-all duration-200" 
+              style={{ width: `${scanProgress.percent || Math.min((scanProgress.scanned_count / 150000) * 100, 95)}%` }}
+            ></div>
           </div>
 
           <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono truncate">
             <span className="truncate">Thư mục hiện tại: {scanProgress.current_folder}</span>
-            <span className="text-rose-400 shrink-0 ml-4">Rác phát hiện: {scanProgress.junk_count}</span>
+            <div className="flex items-center gap-4 shrink-0 ml-4">
+              <span className="text-rose-400 font-bold">Rác phát hiện: {scanProgress.junk_count.toLocaleString()}</span>
+              {scanProgress.percent ? <span className="text-lime-400 font-bold">{scanProgress.percent}%</span> : null}
+            </div>
           </div>
         </div>
       )}
