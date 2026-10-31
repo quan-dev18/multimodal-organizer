@@ -326,17 +326,21 @@ export const FileExplorerTree: React.FC = () => {
 
   // 3. Undo Last Organize
   const handleUndo = async () => {
+    setActionMessage("Đang hoàn tác các tệp đã sắp xếp...");
     try {
       const res = await fetch(`${API_BASE}/files/undo`, { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         setActionMessage(data.message);
+        alert(data.message);
         loadDirectory(currentPath);
       } else {
         alert(data.message);
+        setActionMessage(data.message);
       }
     } catch (e: any) {
       alert(`Lỗi hoàn tác: ${e.message}`);
+      setActionMessage(`Lỗi hoàn tác: ${e.message}`);
     }
   };
 

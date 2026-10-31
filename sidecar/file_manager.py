@@ -2,6 +2,7 @@ import os
 import shutil
 import time
 import hashlib
+import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import psutil
@@ -247,8 +248,26 @@ def generate_organize_preview(file_paths: List[str], target_base_dir: str) -> Li
 
     return preview_items
 
-# Global Undo Journal for safe rollback
-UNDO_JOURNAL: List[Dict[str, Any]] = []
+# Global Undo Journal persisted on disk for cross-restart safe rollback
+UNDO_JOURNAL_FILE = os.path.join(os.path.expanduser("~"), ".mmo_undo_journal.json")
+
+def load_undo_journal() -> List[Dict[str, Any]]:
+    if os.path.exists(UNDO_JOURNAL_FILE):
+        try:
+            with open(UNDO_JOURNAL_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except:
+            pass
+    return []
+
+def save_undo_journal(journal: List[Dict[str, Any]]) -> None:
+    try:
+        with open(UNDO_JOURNAL_FILE, "w", encoding="utf-8") as f:
+            json.dump(journal, f, ensure_ascii=False, indent=2)
+    except:
+        pass
 
 # Execute Safe Organize: Supports both files and entire folders with true MOVE
 def organize_files_safe(
@@ -277,7 +296,16 @@ def organize_files_safe(
                     shutil.move(src, dest_folder)
                 else:
                     shutil.copytree(src, dest_folder, dirs_exist_ok=True)
-                moved.append({"from": str(src), "to": str(dest_folder), "is_dir": True})
+                record = {
+                    "from": str(src),
+                    "to": str(dest_folder),
+                    "mode": mode,
+                    "is_dir": True,
+                    "checksum": "",
+                    "timestamp": int(time.time())
+                }
+                moved.append(record)
+                batch_journal.append(record)
             except Exception as e:
                 failed.append({"path": str(src), "error": str(e)})
             continue
@@ -321,7 +349,9 @@ def organize_files_safe(
             failed.append({"path": str(src), "error": str(e)})
 
     if batch_journal:
-        UNDO_JOURNAL.extend(batch_journal)
+        journal = load_undo_journal()
+        journal.extend(batch_journal)
+        save_undo_journal(journal)
 
     return {
         "success": True,
@@ -332,36 +362,52 @@ def organize_files_safe(
     }
 
 def undo_last_organize() -> Dict[str, Any]:
-    """Undo the last batch of organized files"""
-    global UNDO_JOURNAL
-    if not UNDO_JOURNAL:
-        return {"success": False, "message": "Không có thao tác nào để hoàn tác."}
+    """Undo the last batch of organized files and folders safely"""
+    items_to_undo = load_undo_journal()
+    if not items_to_undo:
+        return {"success": False, "message": "Không có lịch sử thao tác nào để hoàn tác."}
 
     undone_count = 0
-    # Undo backwards
-    items_to_undo = list(UNDO_JOURNAL)
-    UNDO_JOURNAL.clear()
+    failed_items = []
+    still_pending = []
 
+    # Process undo in reverse chronological order
     for item in reversed(items_to_undo):
         src_orig = item["from"]
         dest_current = item["to"]
-        mode = item["mode"]
+        mode = item.get("mode", "move")
 
         try:
             if os.path.exists(dest_current):
+                # Ensure destination directory structure exists before moving back
+                os.makedirs(os.path.dirname(src_orig), exist_ok=True)
                 if mode == "move":
                     # Move back to original place
                     shutil.move(dest_current, src_orig)
                     undone_count += 1
                 elif mode == "copy":
-                    # Just remove copied file
+                    # Just remove copied file/folder
                     send2trash.send2trash(dest_current)
                     undone_count += 1
-        except:
-            pass
+            else:
+                # Target file doesn't exist anymore (already moved or deleted)
+                pass
+        except Exception as err:
+            failed_items.append({"item": item, "error": str(err)})
+            still_pending.append(item)
 
-    return {
-        "success": True,
-        "undone_count": undone_count,
-        "message": f"Đã hoàn tác thành công {undone_count} tệp về trạng thái ban đầu!"
-    }
+    # Save any failed operations back to journal
+    save_undo_journal(still_pending)
+
+    if undone_count > 0:
+        return {
+            "success": True,
+            "undone_count": undone_count,
+            "message": f"Đã hoàn tác thành công {undone_count} tệp/thư mục về vị trí ban đầu!"
+        }
+    else:
+        return {
+            "success": False,
+            "undone_count": 0,
+            "message": "Không thể hoàn tác (các tệp đích đã bị xóa hoặc không còn tồn tại)."
+        }
