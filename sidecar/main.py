@@ -162,13 +162,13 @@ def api_ollama_pull(req: PullRequest):
         try:
             with requests.post(ollama_url, json={"name": req.model_name}, stream=True, timeout=1800) as r:
                 if r.status_code != 200:
-                    yield json.dumps({"error": f"Lỗi Ollama: HTTP {r.status_code}"}) + "\n"
+                    yield json.dumps({"error": f"Lỗi Ollama: HTTP {r.status_code}. Vui lòng kiểm tra ứng dụng Ollama đã bật chưa."}) + "\n"
                     return
                 for chunk in r.iter_lines():
                     if chunk:
                         yield chunk.decode("utf-8") + "\n"
         except Exception as e:
-            yield json.dumps({"error": str(e)}) + "\n"
+            yield json.dumps({"error": f"Không thể kết nối tới Ollama ({str(e)}). Vui lòng đảm bảo Ollama đang chạy."}) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
 

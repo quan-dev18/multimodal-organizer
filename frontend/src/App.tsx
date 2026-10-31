@@ -123,6 +123,9 @@ export function App() {
       for (const line of lines) {
         try {
           const data = JSON.parse(line);
+          if (data.error) {
+            throw new Error(data.error);
+          }
           if (data.status) {
             let percent = 0;
             let speedMbps = 0;
