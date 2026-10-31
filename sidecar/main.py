@@ -1,18 +1,22 @@
 import json
 import time
 import requests
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from hardware import get_hardware_info, check_ollama_status
 from models_catalog import get_recommended_catalog
+from file_manager import scan_files, safe_clean_trash, organize_files_safe
 
-app = FastAPI(title="MMO Sidecar Backend", version="1.0.0")
+app = FastAPI(title="MMO Desktop Core Engine", version="1.0.0")
 
-# Enable CORS for React Frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,11 +30,23 @@ class PullRequest(BaseModel):
 
 class BenchmarkRequest(BaseModel):
     model_name: str
-    prompt: Optional[str] = "Hãy phân loại tệp tin sau và trả về định dạng JSON: Tên tệp: 'Báo_cáo_tài_chính_quý_3_2026.pdf', Kích thước: 2.5MB. Loại tài liệu là gì?"
+    prompt: Optional[str] = "Phân loại tệp: 'Bao_cao_tai_chinh_quy_3_2026.pdf', 2.5MB. Trả về nhãn JSON."
+
+class ScanRequest(BaseModel):
+    directory: str
+    include_hidden: bool = True
+
+class TrashRequest(BaseModel):
+    file_paths: List[str]
+
+class OrganizeRequest(BaseModel):
+    file_paths: List[str]
+    target_base: str
+    mode: str = "copy" # copy or move
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "MMO Python Sidecar"}
+    return {"status": "ok", "service": "MMO Desktop Core"}
 
 @app.get("/api/hardware")
 def api_hardware():
@@ -46,14 +62,12 @@ def api_models_catalog():
 
 @app.post("/api/ollama/pull")
 def api_ollama_pull(req: PullRequest):
-    """Stream pulling model from Ollama with progress"""
     ollama_url = "http://localhost:11434/api/pull"
-    
     def generate():
         try:
             with requests.post(ollama_url, json={"name": req.model_name}, stream=True, timeout=1200) as r:
                 if r.status_code != 200:
-                    yield json.dumps({"error": f"Ollama trả về mã lỗi: {r.status_code}"}) + "\n"
+                    yield json.dumps({"error": f"Ollama lỗi HTTP {r.status_code}"}) + "\n"
                     return
                 for chunk in r.iter_lines():
                     if chunk:
@@ -65,7 +79,6 @@ def api_ollama_pull(req: PullRequest):
 
 @app.post("/api/models/benchmark")
 def api_benchmark(req: BenchmarkRequest):
-    """Run a quick benchmark on selected model to measure tok/s and TTFT"""
     ollama_url = "http://localhost:11434/api/generate"
     start_time = time.time()
     try:
@@ -80,32 +93,42 @@ def api_benchmark(req: BenchmarkRequest):
         )
         total_time = time.time() - start_time
         if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Mô hình chưa được nạp hoặc Ollama bị lỗi.")
+            raise HTTPException(status_code=500, detail="Mô hình chưa được nạp.")
         
         data = response.json()
         eval_count = data.get("eval_count", 0)
         eval_duration_ns = data.get("eval_duration", 1)
-        # convert ns to seconds
         eval_duration_s = eval_duration_ns / 1e9 if eval_duration_ns else total_time
         tokens_per_sec = round(eval_count / eval_duration_s, 2) if eval_duration_s > 0 else 0
-        prompt_eval_count = data.get("prompt_eval_count", 0)
 
         return {
             "success": True,
             "model": req.model_name,
             "response": data.get("response", ""),
             "tokens_per_sec": tokens_per_sec,
-            "eval_count": eval_count,
-            "prompt_eval_count": prompt_eval_count,
             "total_time_sec": round(total_time, 2),
-            "speed_rating": "Cực nhanh" if tokens_per_sec > 35 else ("Nhanh" if tokens_per_sec > 15 else "Trung bình / Chậm")
+            "speed_rating": "Cực mượt" if tokens_per_sec > 35 else ("Mượt" if tokens_per_sec > 15 else "Chậm")
         }
     except Exception as e:
         return {
             "success": False,
             "error": str(e),
-            "message": "Không thể kết nối tới mô hình. Hãy chắc chắn bạn đã tải mô hình này qua Ollama."
+            "message": "Không kết nối được tới mô hình. Vui lòng bật Ollama và tải model."
         }
+
+# File Management Endpoints (L1 Ingestion, L6 Storage, Safe Trash & Organize)
+@app.post("/api/files/scan")
+def api_scan_files(req: ScanRequest):
+    files = scan_files(req.directory, req.include_hidden)
+    return {"directory": req.directory, "total_items": len(files), "files": files}
+
+@app.post("/api/files/trash")
+def api_trash_files(req: TrashRequest):
+    return safe_clean_trash(req.file_paths)
+
+@app.post("/api/files/organize")
+def api_organize_files(req: OrganizeRequest):
+    return organize_files_safe(req.file_paths, req.target_base, req.mode)
 
 if __name__ == "__main__":
     import uvicorn
