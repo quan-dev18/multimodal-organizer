@@ -98,6 +98,7 @@ export const FileExplorerTree: React.FC = () => {
   // Deep Scan Progress State
   const [isDeepScanning, setIsDeepScanning] = useState<boolean>(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
+  const [discoveredJunkPaths, setDiscoveredJunkPaths] = useState<string[]>([]);
   const [actionMessage, setActionMessage] = useState<string>("");
 
   // Dry-run Preview Modal State
@@ -215,6 +216,9 @@ export const FileExplorerTree: React.FC = () => {
               setScanProgress(data);
             } else if (data.type === 'completed') {
               setActionMessage(`Quét xong: ${data.total_scanned} tệp trong ${data.elapsed_seconds}s. Phát hiện ${data.junk_count} tệp rác.`);
+              if (Array.isArray(data.junk_paths)) {
+                setDiscoveredJunkPaths(data.junk_paths);
+              }
             }
           } catch {}
         }
@@ -228,27 +232,39 @@ export const FileExplorerTree: React.FC = () => {
 
   // Safe Trash Action (Recycle Bin) - 1-Click Cleans ALL detected junk automatically!
   const handleSafeTrashAll = async () => {
-    // If user checked items, clean those. Otherwise, automatically find and clean ALL junk files in current folder!
-    const junkFiles = files.filter(f => f.is_junk).map(f => f.path);
-    const targets = selectedPaths.size > 0 ? Array.from(selectedPaths) : junkFiles;
+    // Collect junk targets:
+    // 1. If user checked specific items, clean those.
+    // 2. If deep scan was run, use ALL discovered junk files across the entire scanned tree!
+    // 3. Otherwise, use junk files detected in current folder.
+    const localJunkFiles = files.filter(f => f.is_junk).map(f => f.path);
+    let targets: string[] = [];
+
+    if (selectedPaths.size > 0) {
+      targets = Array.from(selectedPaths);
+    } else if (discoveredJunkPaths.length > 0) {
+      targets = discoveredJunkPaths;
+    } else {
+      targets = localJunkFiles;
+    }
 
     if (targets.length === 0) {
-      alert("Không phát hiện tệp rác nào trong thư mục này cần dọn dẹp!");
+      alert("Không phát hiện tệp rác nào cần dọn dẹp! (Hãy nhấn 'Quét Sâu Phân Tích' để quét tìm rác trong toàn bộ cây thư mục)");
       return;
     }
 
-    if (!confirm(`Xác nhận 1-Click dọn sạch toàn bộ ${targets.length} tệp rác vào Thùng rác Windows Recycle Bin? (An toàn 100%, có thể khôi phục lại bất kỳ lúc nào)`)) {
+    if (!confirm(`Xác nhận 1-Click dọn sạch toàn bộ ${targets.length} tệp rác phát hiện được vào Thùng rác Windows Recycle Bin? (An toàn 100%, có thể khôi phục lại bất kỳ lúc nào)`)) {
       return;
     }
 
     try {
-      setActionMessage("Đang tiến hành dọn sạch tệp rác...");
+      setActionMessage(`Đang tiến hành dọn sạch ${targets.length} tệp rác...`);
       const res = await fetch(`${API_BASE}/files/trash`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ file_paths: targets, clean_system_temp: false })
       });
       const data = await res.json();
+      setDiscoveredJunkPaths([]);
       if (data.blocked_count > 0) {
         setActionMessage(`Đã bảo vệ an toàn ${data.blocked_count} tệp hệ thống. Đã dọn sạch ${data.cleaned_count} tệp rác vào Recycle Bin.`);
       } else {
@@ -501,10 +517,12 @@ export const FileExplorerTree: React.FC = () => {
           <button
             onClick={handleSafeTrashAll}
             className="px-3.5 py-1.5 bg-rose-600/90 hover:bg-rose-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors shadow shadow-rose-950/40"
-            title="Dọn sạch toàn bộ tệp rác (.tmp, .log, .bak, thumbs.db...) trong thư mục này vào Recycle Bin"
+            title="Dọn sạch toàn bộ tệp rác phát hiện được vào Recycle Bin"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            Dọn Sạch Rác (1-Click)
+            {discoveredJunkPaths.length > 0 
+              ? `Dọn ${discoveredJunkPaths.length} Tệp Rác Đã Quét` 
+              : "Dọn Sạch Rác (1-Click)"}
           </button>
 
           <button

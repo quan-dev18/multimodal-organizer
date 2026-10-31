@@ -266,8 +266,7 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
                 is_junk = ext in ["tmp", "log", "bak", "cache", "crdownload", "chk", "dmp"] or fname.lower() in ["thumbs.db", ".ds_store", "desktop.ini"] or fname.startswith("~$")
                 if is_junk:
                     junk_count += 1
-                    if len(junk_paths) < 1000:
-                        junk_paths.append(fpath)
+                    junk_paths.append(fpath)
 
                 if fname.startswith("."):
                     hidden_count += 1
@@ -306,7 +305,7 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
             "junk_count": junk_count,
             "hidden_count": hidden_count,
             "elapsed_seconds": elapsed_total,
-            "junk_samples": junk_paths[:100]
+            "junk_paths": junk_paths
         }) + "\n"
 
     return StreamingResponse(scan_generator(), media_type="application/x-ndjson")
