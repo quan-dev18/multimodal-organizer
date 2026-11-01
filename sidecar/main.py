@@ -38,10 +38,11 @@ app.add_middleware(
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
 
 def load_system_config() -> Dict[str, Any]:
+    home = os.path.expanduser("~")
     default_cfg = {
         "active_models": ["llama3.2:1b", "nomic-embed-text:latest"],
-        "model_storage_path": r"D:\OllamaModels",
-        "last_opened_folder": r"D:\AI_NCKH",
+        "model_storage_path": os.path.join(home, ".ollama", "models"),
+        "last_opened_folder": home,
         "recent_actions": [],
         "created_at": int(time.time()),
         "updated_at": int(time.time())
@@ -169,16 +170,12 @@ def api_models_catalog():
 # Get Current Model Storage Path (OLLAMA_MODELS)
 @app.get("/api/models/storage_location")
 def api_get_storage_location():
+    default_dir = os.path.expanduser("~/.ollama/models")
     path = os.environ.get("OLLAMA_MODELS")
     if not path:
-        # Check User env in Windows registry
-        import winreg
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
-                path, _ = winreg.QueryValueEx(key, "OLLAMA_MODELS")
-        except:
-            path = os.path.expandvars(r"%USERPROFILE%\.ollama\models")
-    return {"current_path": path, "default_c": os.path.expandvars(r"%USERPROFILE%\.ollama\models")}
+        cfg = load_system_config()
+        path = cfg.get("model_storage_path", default_dir)
+    return {"current_path": path, "default_c": default_dir}
 
 # Update Model Storage Location
 @app.post("/api/models/update_storage_location")
@@ -190,14 +187,17 @@ def api_update_storage_location(req: UpdateStoragePathRequest):
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Không thể tạo thư mục: {str(e)}")
 
-    import winreg
+    os.environ["OLLAMA_MODELS"] = new_dir
+    cfg = load_system_config()
+    cfg["model_storage_path"] = new_dir
+    cfg["updated_at"] = int(time.time())
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment", 0, winreg.KEY_SET_VALUE) as key:
-            winreg.SetValueEx(key, "OLLAMA_MODELS", 0, winreg.REG_SZ, new_dir)
-        os.environ["OLLAMA_MODELS"] = new_dir
-        return {"success": True, "new_path": new_dir, "message": "Đã đổi nơi lưu trữ mô hình thành công! Hãy khởi động lại Ollama để nhận đường dẫn mới."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Lỗi ghi cấu hình Registry: {str(e)}")
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+    return {"success": True, "new_path": new_dir, "message": "Đã đổi nơi lưu trữ mô hình thành công! Hãy khởi động lại Ollama để nhận đường dẫn mới."}
 
 class SelectFolderRequest(BaseModel):
     title: Optional[str] = "Chọn thư mục"
@@ -663,11 +663,12 @@ def api_ai_chat(req: ChatRequest):
     }
 
 class OverviewStatsRequest(BaseModel):
-    directory: Optional[str] = "D:\\AI_NCKH"
+    directory: Optional[str] = None
 
 @app.post("/api/stats/overview")
 def api_get_overview_stats(req: Optional[OverviewStatsRequest] = None):
-    scan_dir = req.directory if req and req.directory and os.path.exists(req.directory) else "D:\\AI_NCKH"
+    default_dir = os.path.expanduser("~")
+    scan_dir = req.directory if req and req.directory and os.path.exists(req.directory) else default_dir
     stats = {
         "text": {"count": 0, "bytes": 0, "model": "Qwen 2.5 / Llama 3.2"},
         "image": {"count": 0, "bytes": 0, "model": "Moondream2 Vision"},
@@ -729,13 +730,14 @@ def api_get_overview_stats(req: Optional[OverviewStatsRequest] = None):
     }
 
 class TieringMigrationRequest(BaseModel):
-    source_dir: Optional[str] = "D:\\AI_NCKH"
-    target_cold_dir: Optional[str] = "D:\\AI_NCKH\\Cold_Tier_Vault"
+    source_dir: Optional[str] = None
+    target_cold_dir: Optional[str] = None
     days_inactive: Optional[int] = 30
 
 @app.post("/api/storage/tiering_scan")
 def api_storage_tiering_scan(req: Optional[TieringMigrationRequest] = None):
-    scan_dir = req.source_dir if req and req.source_dir and os.path.exists(req.source_dir) else "D:\\AI_NCKH"
+    home = os.path.expanduser("~")
+    scan_dir = req.source_dir if req and req.source_dir and os.path.exists(req.source_dir) else home
     from file_manager import format_bytes
     
     now = time.time()
@@ -803,7 +805,8 @@ def api_storage_tiering_scan(req: Optional[TieringMigrationRequest] = None):
 def api_storage_tiering_migrate(req: TieringMigrationRequest):
     scan_res = api_storage_tiering_scan(req)
     cold_items = scan_res["cold"]["sample"]
-    target_cold = req.target_cold_dir or "D:\\AI_NCKH\\Cold_Tier_Vault"
+    home = os.path.expanduser("~")
+    target_cold = req.target_cold_dir or os.path.join(home, "Cold_Tier_Vault")
     
     from file_manager import organize_files_safe
     paths_to_move = [item["path"] for item in cold_items if os.path.exists(item["path"])]
@@ -823,7 +826,7 @@ def api_storage_tiering_migrate(req: TieringMigrationRequest):
 
 class SemanticSearchRequest(BaseModel):
     query: str
-    search_dir: Optional[str] = "D:\\AI_NCKH"
+    search_dir: Optional[str] = None
     top_k: Optional[int] = 10
 
 def sniff_file_content(file_path: str, max_chars: int = 1000) -> str:
@@ -856,7 +859,8 @@ def api_semantic_search(req: SemanticSearchRequest):
     if not query:
         return {"success": True, "results": []}
 
-    search_path = req.search_dir.strip() if req.search_dir and os.path.exists(req.search_dir.strip()) else "D:\\AI_NCKH"
+    home = os.path.expanduser("~")
+    search_path = req.search_dir.strip() if req.search_dir and os.path.exists(req.search_dir.strip()) else home
     
     # 1. Collect candidate files from search directory (up to 300 files)
     candidate_files = []

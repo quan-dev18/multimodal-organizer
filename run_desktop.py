@@ -28,17 +28,21 @@ def ensure_ollama_running():
     except:
         pass
 
-    ollama_exe = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe")
-    if os.path.exists(ollama_exe):
+    # Try standard system ollama first (Linux / Mac / Windows PATH)
+    import shutil
+    ollama_bin = shutil.which("ollama")
+    if not ollama_bin:
+        ollama_bin = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe")
+
+    if ollama_bin and os.path.exists(ollama_bin):
         try:
             env = os.environ.copy()
             if "OLLAMA_MODELS" not in env or not env["OLLAMA_MODELS"]:
-                env["OLLAMA_MODELS"] = r"D:\OllamaModels"
+                env["OLLAMA_MODELS"] = os.path.expanduser("~/.ollama/models")
             
             subprocess.Popen(
-                [ollama_exe, "serve"],
+                [ollama_bin, "serve"],
                 env=env,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
