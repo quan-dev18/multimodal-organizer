@@ -347,6 +347,8 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
 
         EXCLUDED_DIRS = {
             "$recycle.bin", "system volume information", "config.msi",
+            "recovery", "$winreagent", "documents and settings",
+            "winsxs", "servicing", "assembly",
             "node_modules", ".git", "target", "build", "dist", ".cache",
             "__pycache__", ".venv", "venv", "androidvirtual"
         }
@@ -361,7 +363,7 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
         stopped_early = False
 
         try:
-            for dirpath, dirnames, filenames in os.walk(root_dir):
+            for dirpath, dirnames, filenames in os.walk(root_dir, onerror=lambda e: None):
                 # Depth limiter
                 current_depth = dirpath.rstrip(os.sep).count(os.sep) - base_depth
                 if current_depth >= MAX_DEPTH:
@@ -430,7 +432,7 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
             "junk_count": junk_count,
             "hidden_count": hidden_count,
             "elapsed_seconds": elapsed_total,
-            "junk_paths": junk_paths,
+            "junk_paths": junk_paths[:5000],
             "stopped_early": stopped_early
         }) + "\n"
 

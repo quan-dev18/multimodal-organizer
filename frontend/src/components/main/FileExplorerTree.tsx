@@ -215,21 +215,25 @@ export const FileExplorerTree: React.FC = () => {
       if (!res.body) return;
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      let partialBuffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const text = decoder.decode(value);
-        const lines = text.split('\n').filter(Boolean);
+        partialBuffer += decoder.decode(value, { stream: true });
+        const lines = partialBuffer.split('\n');
+        partialBuffer = lines.pop() || '';
+
         for (const line of lines) {
+          if (!line.trim()) continue;
           try {
-            const data = JSON.parse(line);
+            const data = JSON.parse(line.trim());
             if (data.type === 'progress') {
               setScanProgress(data);
             } else if (data.type === 'completed' || data.status === 'completed' || data.total_files !== undefined) {
               sfx.complete();
-              setActionMessage(`Quét xong: ${data.total_scanned} tệp trong ${data.elapsed_seconds}s. Phát hiện ${data.junk_count} tệp rác.`);
+              setActionMessage(`Quét xong: ${data.total_scanned?.toLocaleString() || 0} tệp trong ${data.elapsed_seconds || 0}s. Phát hiện ${data.junk_count?.toLocaleString() || 0} tệp rác.`);
               if (Array.isArray(data.junk_paths)) {
                 setDiscoveredJunkPaths(data.junk_paths);
               }
