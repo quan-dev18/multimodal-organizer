@@ -342,13 +342,13 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
 
         is_root_drive = len(root_dir.rstrip("\\")) <= 2
         base_depth = root_dir.rstrip("\\").count(os.sep)
-        MAX_DEPTH = 3 if is_root_drive else 8
-        MAX_FILES = 15000 if is_root_drive else 80000
+        MAX_DEPTH = 50
+        MAX_FILES = 1000000
 
         EXCLUDED_DIRS = {
             "$recycle.bin", "system volume information", "config.msi",
             "node_modules", ".git", "target", "build", "dist", ".cache",
-            "__pycache__", ".venv", "venv", "appdata", "androidvirtual", "dockerres"
+            "__pycache__", ".venv", "venv", "androidvirtual"
         }
 
         estimated_total_files = 10000 if is_root_drive else 5000
