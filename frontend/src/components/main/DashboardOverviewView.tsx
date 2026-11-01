@@ -11,7 +11,8 @@ import {
   RefreshCw,
   HardDrive,
   FolderOpen,
-  Folder
+  Folder,
+  Cpu
 } from 'lucide-react';
 import { sfx } from '../../lib/sounds';
 import { useApp } from '../../lib/AppContext';
@@ -32,9 +33,29 @@ interface ChatMessage {
   sender: 'user' | 'bot';
   text: string;
   time: string;
+  model?: string;
 }
 
-export const DashboardOverviewView: React.FC = () => {
+interface DashboardOverviewViewProps {
+  activeModelTags?: string[];
+  primaryModelTag?: string;
+  activeModelNames?: string[];
+}
+
+export const DashboardOverviewView: React.FC<DashboardOverviewViewProps> = ({
+  activeModelTags = [],
+  primaryModelTag = '',
+  activeModelNames: _activeModelNames = []
+}) => {
+  const [installedModels, setInstalledModels] = useState<string[]>(activeModelTags);
+  const [selectedChatModel, setSelectedChatModel] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('mmo_chat_model');
+      if (saved) return saved;
+    } catch {}
+    return primaryModelTag || (activeModelTags.length > 0 ? activeModelTags[0] : 'qwen2.5:1.5b');
+  });
+
   const { globalDirectory, setGlobalDirectory } = useApp();
   // Real stats state
   const [, setStats] = useState<any>(null);
@@ -43,6 +64,30 @@ export const DashboardOverviewView: React.FC = () => {
   const [totalSize, setTotalSize] = useState<string>('0 B');
   const [loadingStats, setLoadingStats] = useState<boolean>(true);
   const [targetDir, setTargetDir] = useState<string>(globalDirectory);
+
+  // Sync available installed models from Ollama dynamically
+  useEffect(() => {
+    fetch(`${API_BASE}/ollama/status`)
+      .then(r => r.json())
+      .then(data => {
+        if (data && Array.isArray(data.installed_models) && data.installed_models.length > 0) {
+          setInstalledModels(data.installed_models);
+          // If current model not installed, pick the first available
+          if (!data.installed_models.includes(selectedChatModel)) {
+            setSelectedChatModel(data.installed_models[0]);
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleModelChange = (newModel: string) => {
+    setSelectedChatModel(newModel);
+    try {
+      localStorage.setItem('mmo_chat_model', newModel);
+    } catch {}
+    sfx.click();
+  };
 
   // Sync with global directory
   useEffect(() => {
@@ -54,8 +99,9 @@ export const DashboardOverviewView: React.FC = () => {
     {
       id: 'welcome',
       sender: 'bot',
-      text: 'Xin chào! Tôi là Trợ lý AI tích hợp của MMO. Bạn có thắc mắc gì về phân loại tệp tin, dọn rác hay quản lý bộ nhớ đĩa không?',
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      text: 'Xin chào! Tôi là Trợ lý AI tích hợp của MMO. Bạn có thể chọn mô hình đã tải bất kỳ ở góc trên để trao đổi về phân loại tệp tin, dọn rác hay tối ưu bộ nhớ.',
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      model: selectedChatModel
     }
   ]);
   const [inputMessage, setInputMessage] = useState<string>('');
@@ -138,7 +184,7 @@ export const DashboardOverviewView: React.FC = () => {
       const res = await fetch(`${API_BASE}/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userText, model: "llama3.2:1b" })
+        body: JSON.stringify({ message: userText, model: selectedChatModel })
       });
       const data = await res.json();
       const botText = data.reply || "Xin lỗi, hiện tại tôi chưa thể kết nối tới mô hình AI.";
@@ -149,7 +195,8 @@ export const DashboardOverviewView: React.FC = () => {
           id: `b_${Date.now()}`,
           sender: 'bot',
           text: botText,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          model: data.model || selectedChatModel
         }
       ]);
       sfx.success();
@@ -159,8 +206,9 @@ export const DashboardOverviewView: React.FC = () => {
         {
           id: `b_${Date.now()}`,
           sender: 'bot',
-          text: `Lỗi kết nối tới Trợ lý AI: ${err.message}. Hãy đảm bảo Ollama đang chạy.`,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          text: `Lỗi kết nối tới Trợ lý AI (${selectedChatModel}): ${err.message}. Hãy đảm bảo Ollama đang chạy.`,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          model: selectedChatModel
         }
       ]);
     } finally {
@@ -174,137 +222,162 @@ export const DashboardOverviewView: React.FC = () => {
       case 'image': return ImageIcon;
       case 'audio': return Music;
       case 'video': return Video;
-      default: return HardDrive;
+      default: return Folder;
     }
   };
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col p-6 space-y-6 overflow-y-auto">
-      {/* Top Header */}
-      <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+    <div className="flex-1 flex flex-col p-6 space-y-6 max-w-7xl mx-auto w-full overflow-y-auto">
+      {/* 1. Header Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-4 bg-zinc-900/60 p-4 rounded-2xl border border-zinc-800">
         <div>
           <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
             <PieIcon className="w-5 h-5 text-indigo-400" />
-            Tổng quan dữ liệu thực tế & Trợ lý hỗ trợ
+            Tổng Quan Thống Kê & Trợ Lý AI
           </h2>
-          <p className="text-xs text-zinc-400 mt-1">
-            Thống kê tự động từ thư mục dự án trên máy của bạn và tương tác trực tiếp với Trợ lý AI cục bộ
+          <p className="text-xs text-zinc-400 mt-0.5">
+            Phân tích tỷ lệ chiếm dụng đĩa và hỗ trợ trực tiếp từ mô hình AI cục bộ
           </p>
         </div>
 
-        <button
-          onClick={() => fetchRealOverview()}
-          disabled={loadingStats}
-          className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs flex items-center gap-1.5 border border-zinc-700 shadow-sm transition-colors cursor-pointer"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loadingStats ? 'animate-spin text-indigo-400' : ''}`} />
-          Quét cập nhật
-        </button>
-      </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs">
+            <FolderOpen className="w-3.5 h-3.5 text-zinc-400 mr-2 shrink-0" />
+            <input
+              type="text"
+              value={targetDir}
+              onChange={(e) => setTargetDir(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  setGlobalDirectory(targetDir);
+                  fetchRealOverview(targetDir);
+                }
+              }}
+              className="bg-transparent text-zinc-200 outline-none w-48 font-mono text-xs"
+              placeholder="Đường dẫn thư mục..."
+            />
+          </div>
 
-      {/* Directory Selector Bar */}
-      <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-sm">
-        <div className="flex items-center gap-2.5 flex-1 min-w-[320px]">
-          <Folder className="w-4 h-4 text-amber-400 shrink-0" />
-          <span className="text-xs font-medium text-zinc-300 shrink-0">Thư mục phân tích:</span>
-          <input
-            type="text"
-            value={targetDir}
-            onChange={(e) => setTargetDir(e.target.value)}
-            className="flex-1 bg-zinc-950/80 border border-zinc-700/80 rounded-lg px-3 py-1.5 text-xs text-zinc-200 font-mono outline-none focus:border-indigo-500"
-          />
+          <button
+            onClick={handlePickDirectory}
+            className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium rounded-xl border border-zinc-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <FolderOpen className="w-3.5 h-3.5" />
+            Duyệt
+          </button>
+
+          <button
+            onClick={() => fetchRealOverview(targetDir)}
+            disabled={loadingStats}
+            className="p-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl border border-zinc-700 transition-colors disabled:opacity-50 cursor-pointer"
+            title="Làm mới thống kê"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingStats ? 'animate-spin text-indigo-400' : ''}`} />
+          </button>
         </div>
-        <button
-          onClick={handlePickDirectory}
-          type="button"
-          className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-        >
-          <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
-          Chọn thư mục
-        </button>
       </div>
 
-      {/* 1. Real Stats Cards Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
-        {chartData.map((item) => {
-          const Icon = getModalityIcon(item.key);
-          const percent = totalFiles > 0 ? ((item.count / totalFiles) * 100).toFixed(1) : 0;
-          return (
-            <div
-              key={item.key}
-              className="bg-zinc-900/70 border border-zinc-800/80 rounded-xl p-4 transition-all hover:border-zinc-700/80 shadow-sm"
-            >
-              <div className="flex items-center justify-between mb-2.5">
-                <span className="text-xs text-zinc-400 font-medium">{item.name}</span>
-                <div className="p-1.5 rounded-lg bg-zinc-950 border border-zinc-800">
-                  <Icon className="w-4 h-4" style={{ color: item.color }} />
-                </div>
-              </div>
-              <div className="text-xl font-bold font-mono text-zinc-100">
-                {item.count.toLocaleString()} <span className="text-xs font-normal text-zinc-500 font-sans">tệp</span>
-              </div>
-              <div className="flex items-center justify-between text-xs text-zinc-500 mt-2 font-mono">
-                <span>{item.size}</span>
-                <span className="text-zinc-400">{percent}%</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* 2. Visual Distribution Chart Bar */}
-      <div className="bg-zinc-900/70 border border-zinc-800 rounded-xl p-4 space-y-3 shadow-sm">
-        <div className="flex items-center justify-between text-xs text-zinc-300">
-          <span className="font-semibold flex items-center gap-2">
+      {/* 2. Real Modality Distribution Grid */}
+      <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-5 shadow-md">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
             <HardDrive className="w-4 h-4 text-indigo-400" />
-            Biểu đồ phân bổ tỷ lệ tệp tin (Tổng: {totalFiles.toLocaleString()} tệp · {totalSize})
-          </span>
-          <span className="text-zinc-500 text-xs font-mono truncate max-w-[50%]">Thư mục: {targetDir}</span>
+            <h3 className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
+              Tỷ lệ Định Dạng Tệp ({targetDir})
+            </h3>
+          </div>
+          <div className="text-xs text-zinc-400">
+            Tổng cộng: <span className="font-semibold text-zinc-200">{totalFiles.toLocaleString()}</span> tệp (<span className="text-indigo-300 font-mono">{totalSize}</span>)
+          </div>
         </div>
 
-        {/* Multi-segmented distribution bar */}
-        <div className="w-full h-3.5 bg-zinc-950 rounded-full overflow-hidden flex p-0.5 border border-zinc-800/80">
+        {/* Visual Multi-Segment Bar */}
+        <div className="w-full h-3 bg-zinc-950 rounded-full overflow-hidden flex mb-5 border border-zinc-800">
+          {chartData.length > 0 ? (
+            chartData.map((item) => {
+              const pct = totalFiles > 0 ? (item.count / totalFiles) * 100 : 0;
+              if (pct === 0) return null;
+              return (
+                <div
+                  key={item.key}
+                  style={{ width: `${pct}%`, backgroundColor: item.color }}
+                  className="h-full transition-all duration-300 hover:opacity-80"
+                  title={`${item.name}: ${item.count} tệp (${pct.toFixed(1)}%)`}
+                />
+              );
+            })
+          ) : (
+            <div className="w-full h-full bg-zinc-800 animate-pulse" />
+          )}
+        </div>
+
+        {/* Legend Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {chartData.map((item) => {
-            const widthPct = totalFiles > 0 ? (item.count / totalFiles) * 100 : 0;
-            if (widthPct <= 0) return null;
+            const Icon = getModalityIcon(item.key);
+            const pct = totalFiles > 0 ? ((item.count / totalFiles) * 100).toFixed(1) : '0';
             return (
               <div
                 key={item.key}
-                style={{ width: `${widthPct}%`, backgroundColor: item.color }}
-                className="h-full first:rounded-l-full last:rounded-r-full transition-all duration-500"
-                title={`${item.name}: ${item.count} tệp (${widthPct.toFixed(1)}%)`}
-              />
+                className="flex items-center gap-3 p-3 bg-zinc-950/60 border border-zinc-800/80 rounded-xl"
+              >
+                <div
+                  className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: `${item.color}20`, color: item.color }}
+                >
+                  <Icon className="w-4 h-4" />
+                </div>
+                <div className="overflow-hidden">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium text-zinc-200 truncate">{item.name}</span>
+                    <span className="text-[10px] text-zinc-400 font-mono">({pct}%)</span>
+                  </div>
+                  <div className="text-[11px] text-zinc-400 font-mono mt-0.5">
+                    {item.count.toLocaleString()} tệp · {item.size}
+                  </div>
+                </div>
+              </div>
             );
           })}
-        </div>
-
-        {/* Legend */}
-        <div className="flex flex-wrap items-center gap-4 pt-1 text-xs text-zinc-400">
-          {chartData.map((item) => (
-            <div key={item.key} className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-              <span>{item.name}:</span>
-              <b className="text-zinc-200 font-mono">{item.count}</b>
-            </div>
-          ))}
         </div>
       </div>
 
       {/* 3. AI Assistant Chatbot Panel */}
-      <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl flex flex-col h-96 min-h-[340px] shadow-md overflow-hidden shrink-0">
-        {/* Chat Header */}
-        <div className="px-4 py-3 bg-zinc-950/80 border-b border-zinc-800 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
-              <Bot className="w-4 h-4 text-indigo-400" />
+      <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl flex flex-col h-[450px] min-h-[380px] shadow-md overflow-hidden shrink-0">
+        {/* Chat Header with Dynamic Model Selector */}
+        <div className="px-5 py-3.5 bg-zinc-950/90 border-b border-zinc-800 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+              <Bot className="w-5 h-5 text-indigo-400" />
             </div>
             <div>
               <h3 className="text-xs font-semibold text-zinc-100 flex items-center gap-2">
-                Trợ lý AI Hỗ Trợ MMO (Llama 3.2 1B Cục Bộ)
+                Trợ lý AI Hỗ Trợ MMO
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               </h3>
               <p className="text-xs text-zinc-500">Hỏi đáp cách tổ chức dữ liệu, phân loại tệp và giải phóng ổ cứng</p>
             </div>
+          </div>
+
+          {/* Dynamic Model Picker */}
+          <div className="flex items-center gap-2">
+            <Cpu className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+            <span className="text-xs text-zinc-400 font-medium">Mô hình AI:</span>
+            <select
+              value={selectedChatModel}
+              onChange={(e) => handleModelChange(e.target.value)}
+              className="bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs text-indigo-300 font-mono focus:outline-none focus:border-indigo-500 cursor-pointer shadow-sm hover:bg-zinc-800 transition-colors"
+            >
+              {installedModels.length > 0 ? (
+                installedModels.map((m) => (
+                  <option key={m} value={m} className="bg-zinc-900 text-zinc-200">
+                    {m}
+                  </option>
+                ))
+              ) : (
+                <option value={selectedChatModel}>{selectedChatModel}</option>
+              )}
+            </select>
           </div>
         </div>
 
@@ -326,8 +399,13 @@ export const DashboardOverviewView: React.FC = () => {
                   ? 'bg-indigo-600 text-white'
                   : 'bg-zinc-950/90 text-zinc-200 border border-zinc-800/80'
               }`}>
+                {msg.sender === 'bot' && msg.model && (
+                  <span className="inline-block text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-950/60 text-indigo-400 border border-indigo-900/60 mb-1">
+                    {msg.model}
+                  </span>
+                )}
                 <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
-                <span className={`block text-xs font-mono ${msg.sender === 'user' ? 'text-indigo-200 text-right' : 'text-zinc-500'}`}>
+                <span className={`block text-[10px] font-mono ${msg.sender === 'user' ? 'text-indigo-200 text-right' : 'text-zinc-500'}`}>
                   {msg.time}
                 </span>
               </div>
@@ -336,33 +414,38 @@ export const DashboardOverviewView: React.FC = () => {
 
           {isAiReplying && (
             <div className="flex items-center gap-2.5 text-zinc-400 text-xs">
-              <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center text-indigo-400">
-                <Bot className="w-3.5 h-3.5 animate-bounce" />
+              <div className="w-7 h-7 rounded-lg bg-zinc-800 text-indigo-400 flex items-center justify-center border border-zinc-700 shrink-0">
+                <Bot className="w-3.5 h-3.5 animate-pulse" />
               </div>
-              <div className="bg-zinc-950 rounded-xl px-3.5 py-2 border border-zinc-800 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-ping" />
-                <span>Trợ lý AI đang suy nghĩ...</span>
+              <div className="bg-zinc-950/90 border border-zinc-800 rounded-xl px-3.5 py-2.5 flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping" />
+                <span className="text-zinc-400">Đang suy luận với <strong className="text-indigo-300 font-mono">{selectedChatModel}</strong>...</span>
               </div>
             </div>
           )}
           <div ref={chatEndRef} />
         </div>
 
-        {/* Input Bar */}
-        <form onSubmit={handleSendMessage} className="p-3 bg-zinc-950/90 border-t border-zinc-800 flex items-center gap-2">
+        {/* Input Form */}
+        <form
+          onSubmit={handleSendMessage}
+          className="p-3 bg-zinc-950/80 border-t border-zinc-800 flex items-center gap-2 shrink-0"
+        >
           <input
             type="text"
             value={inputMessage}
             onChange={(e) => setInputMessage(e.target.value)}
-            placeholder="Hỏi trợ lý (ví dụ: 'Cách dọn sạch tệp tạm an toàn', 'Quy tắc nào cho tệp ảnh đồ họa?')..."
-            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-indigo-500"
+            placeholder={`Đặt câu hỏi cho ${selectedChatModel} về quản lý dữ liệu, dọn rác...`}
+            disabled={isAiReplying}
+            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
           />
           <button
             type="submit"
             disabled={!inputMessage.trim() || isAiReplying}
-            className="p-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-xl transition-all cursor-pointer shadow-sm"
+            className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-sm"
           >
-            <Send className="w-4 h-4" />
+            <Send className="w-3.5 h-3.5" />
+            Gửi
           </button>
         </form>
       </div>

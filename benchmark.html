@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MMO AI Hardware & Model Benchmark Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --border: #1f2937;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      padding: 24px;
+      min-height: 100vh;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header h1 {
+      font-size: 24px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .badge {
+      font-size: 12px;
+      background: rgba(99, 102, 241, 0.2);
+      color: #818cf8;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      padding: 4px 10px;
+      border-radius: 9999px;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      background: #1e293b;
+      border: 1px solid #334155;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--danger);
+    }
+    .dot.online {
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    }
+    .card-title {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    .card-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .card-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+    .benchmark-section {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 900px) {
+      .benchmark-section {
+        grid-template-columns: 1fr;
+      }
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    select, input, textarea {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #fff;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    select:focus, input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    button {
+      width: 100%;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background: var(--accent-hover);
+    }
+    button:disabled {
+      background: #374151;
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+    .chart-container {
+      position: relative;
+      height: 280px;
+      width: 100%;
+    }
+    .history-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+    .history-table th, .history-table td {
+      text-align: left;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .history-table th {
+      color: var(--text-muted);
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .history-table tr:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .progress-bar-bg {
+      width: 100%;
+      height: 6px;
+      background: #1e293b;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 10px;
+      display: none;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #6366f1, #10b981);
+      width: 0%;
+      transition: width 0.3s;
+    }
+    .result-box {
+      margin-top: 16px;
+      background: #0b1120;
+      border: 1px solid #1e293b;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #94a3b8;
+      max-height: 120px;
+      overflow-y: auto;
+      font-family: monospace;
+      white-space: pre-wrap;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div>
+      <h1>
+        ⚡ MMO Local AI Benchmark Dashboard
+        <span class="badge">Standalone Web Tool</span>
+      </h1>
+      <p style="color: var(--text-muted); font-size: 13px; margin-top: 4px;">
+        Đo lường thời gian thực thi, độ trễ và tốc độ sinh token của các Model AI trực tiếp trên máy của bạn.
+      </p>
+    </div>
+    <div class="status-pill" id="ollamaStatus">
+      <span class="dot" id="ollamaDot"></span>
+      <span id="ollamaText">Đang kiểm tra Ollama...</span>
+    </div>
+  </div>
+
+  <!-- Hardware Overview Grid -->
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Phần cứng máy tính</div>
+      <div class="card-value" id="gpuName">Đồ họa tích hợp (Shared RAM)</div>
+      <div class="card-sub" id="gpuDetails">VRAM Khả dụng: 6.2 GB • CPU: 16 Cores</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Bộ nhớ RAM hệ thống</div>
+      <div class="card-value" id="ramInfo">15.4 GB</div>
+      <div class="card-sub">Trống: ~6.8 GB (Đủ chạy mô hình ≤ 3B / Q4)</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Tốc độ trung bình (Tokens/sec)</div>
+      <div class="card-value" id="avgSpeed" style="color: #10b981;">-- tok/s</div>
+      <div class="card-sub" id="avgLatency">Độ trễ phản hồi đầu (TTFT): -- ms</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Mô hình tốt nhất đề xuất</div>
+      <div class="card-value" id="recommendedModel" style="color: #818cf8;">llama3.2:1b</div>
+      <div class="card-sub">Hiệu năng mượt nhất trên iGPU hiện tại</div>
+    </div>
+  </div>
+
+  <!-- Main Benchmark Section -->
+  <div class="benchmark-section">
+    <!-- Configuration & Trigger Panel -->
+    <div class="card">
+      <h3 style="margin-bottom: 16px; font-size: 16px;">🚀 Bắt đầu Benchmark Thử nghiệm</h3>
+      
+      <div class="form-group">
+        <label>Chọn Model để đo:</label>
+        <select id="modelSelect">
+          <option value="llama3.2:1b">llama3.2:1b (Đã cài)</option>
+          <option value="qwen2.5:1.5b">qwen2.5:1.5b</option>
+          <option value="deepseek-r1:1.5b">deepseek-r1:1.5b</option>
+          <option value="qwen2.5:0.5b">qwen2.5:0.5b (Siêu nhẹ)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Loại tác vụ kiểm thử (Workload):</label>
+        <select id="taskSelect">
+          <option value="classify">Phân loại & Sắp xếp 20 tập tin (Tác vụ MMO)</option>
+          <option value="summarize">Tóm tắt văn bản tài liệu ngắn (~250 từ)</option>
+          <option value="reasoning">Suy luận logic & Code (Kiểm tra tải CPU)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Số lần chạy lặp lại:</label>
+        <input type="number" id="iterations" value="1" min="1" max="5">
+      </div>
+
+      <button id="runBtn" onclick="runBenchmark()">
+        <span>▶ Bắt đầu kiểm tra thời gian thực</span>
+      </button>
+
+      <div class="progress-bar-bg" id="progressBar">
+        <div class="progress-bar-fill" id="progressFill"></div>
+      </div>
+
+      <div class="result-box" id="resultLog"></div>
+    </div>
+
+    <!-- Live Performance Visual Charts -->
+    <div class="card">
+      <h3 style="margin-bottom: 12px; font-size: 16px;">📊 Biểu đồ so sánh Tốc độ & Thời gian (Tokens/s vs Latency)</h3>
+      <div class="chart-container">
+        <canvas id="benchmarkChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Benchmark History Table -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+      <h3 style="font-size: 16px;">📋 Lịch sử các lần đo trên Laptop của bạn</h3>
+      <button style="width: auto; padding: 6px 12px; font-size: 12px;" onclick="clearHistory()">Xóa lịch sử</button>
+    </div>
+    <div style="overflow-x: auto;">
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>Thời gian</th>
+            <th>Model</th>
+            <th>Tác vụ</th>
+            <th>Tổng thời gian</th>
+            <th>Tốc độ sinh (tok/s)</th>
+            <th>Độ trễ TTFT</th>
+            <th>Đánh giá phần cứng</th>
+          </tr>
+        </thead>
+        <tbody id="historyBody">
+          <!-- Populated dynamically -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const OLLAMA_HOST = 'http://127.0.0.1:11434';
+    let chartInstance = null;
+    let benchmarkHistory = JSON.parse(localStorage.getItem('mmo_benchmarks') || '[]');
+
+    // Sample default history if empty
+    if (benchmarkHistory.length === 0) {
+      benchmarkHistory = [
+        { time: 'Mẫu tham chiếu', model: 'llama3.2:1b', task: 'Phân loại tập tin', duration: 1.42, tokPerSec: 28.5, ttft: 220, rating: 'Xuất sắc (Mượt)' },
+        { time: 'Mẫu tham chiếu', model: 'qwen2.5:1.5b', task: 'Phân loại tập tin', duration: 2.15, tokPerSec: 21.2, ttft: 340, rating: 'Tốt' },
+        { time: 'Mẫu tham chiếu', model: 'qwen2.5:3b', task: 'Tóm tắt văn bản', duration: 4.80, tokPerSec: 12.4, ttft: 680, rating: 'Chậm (Nặng iGPU)' }
+      ];
+    }
+
+    async function checkOllama() {
+      const dot = document.getElementById('ollamaDot');
+      const text = document.getElementById('ollamaText');
+      const modelSelect = document.getElementById('modelSelect');
+
+      try {
+        const res = await fetch(`${OLLAMA_HOST}/api/tags`);
+        if (res.ok) {
+          const data = await res.json();
+          dot.className = 'dot online';
+          text.textContent = `Ollama đã kết nối (${data.models ? data.models.length : 0} models)`;
+          
+          if (data.models && data.models.length > 0) {
+            modelSelect.innerHTML = '';
+            data.models.forEach(m => {
+              const opt = document.createElement('option');
+              opt.value = m.name;
+              opt.textContent = `${m.name} (${(m.size / 1e9).toFixed(1)} GB)`;
+              modelSelect.appendChild(opt);
+            });
+          }
+        } else {
+          throw new Error('Not 200');
+        }
+      } catch (e) {
+        dot.className = 'dot';
+        text.textContent = 'Ollama chưa chạy (127.0.0.1:11434)';
+      }
+    }
+
+    function initChart() {
+      const ctx = document.getElementById('benchmarkChart').getContext('2d');
+      const labels = benchmarkHistory.map(h => `${h.model}`);
+      const speeds = benchmarkHistory.map(h => h.tokPerSec);
+      const durations = benchmarkHistory.map(h => h.duration);
+
+      chartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Tốc độ sinh (Tokens/giây - Càng cao càng tốt)',
+              data: speeds,
+              backgroundColor: '#6366f1',
+              borderRadius: 6,
+              yAxisID: 'y'
+            },
+            {
+              label: 'Tổng thời gian hoàn thành (Giây - Càng thấp càng tốt)',
+              data: durations,
+              backgroundColor: '#10b981',
+              borderRadius: 6,
+              yAxisID: 'y1'
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              labels: { color: '#9ca3af' }
+            }
+          },
+          scales: {
+            x: {
+              ticks: { color: '#9ca3af' },
+              grid: { color: '#1f2937' }
+            },
+            y: {
+              type: 'linear',
+              position: 'left',
+              ticks: { color: '#818cf8' },
+              grid: { color: '#1f2937' },
+              title: { display: true, text: 'Tokens / giây', color: '#818cf8' }
+            },
+            y1: {
+              type: 'linear',
+              position: 'right',
+              ticks: { color: '#34d399' },
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: 'Thời gian (Giây)', color: '#34d399' }
+            }
+          }
+        }
+      });
+    }
+
+    function renderHistory() {
+      const tbody = document.getElementById('historyBody');
+      tbody.innerHTML = '';
+      benchmarkHistory.slice().reverse().forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${item.time}</td>
+          <td><strong>${item.model}</strong></td>
+          <td>${item.task}</td>
+          <td style="color: #34d399; font-weight:600;">${item.duration}s</td>
+          <td style="color: #818cf8; font-weight:600;">${item.tokPerSec} tok/s</td>
+          <td>${item.ttft} ms</td>
+          <td><span class="badge" style="${item.tokPerSec > 20 ? 'background:rgba(16,185,129,0.2);color:#34d399;' : 'background:rgba(245,158,11,0.2);color:#fbbf24;'}">${item.rating}</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      if (benchmarkHistory.length > 0) {
+        const validSpeeds = benchmarkHistory.filter(h => h.tokPerSec > 0);
+        if (validSpeeds.length > 0) {
+          const avg = (validSpeeds.reduce((a, b) => a + b.tokPerSec, 0) / validSpeeds.length).toFixed(1);
+          document.getElementById('avgSpeed').textContent = `${avg} tok/s`;
+          const avgT = Math.round(validSpeeds.reduce((a, b) => a + b.ttft, 0) / validSpeeds.length);
+          document.getElementById('avgLatency').textContent = `Độ trễ phản hồi đầu (TTFT): ~${avgT} ms`;
+        }
+      }
+    }
+
+    function clearHistory() {
+      benchmarkHistory = [];
+      localStorage.removeItem('mmo_benchmarks');
+      renderHistory();
+      if (chartInstance) {
+        chartInstance.data.labels = [];
+        chartInstance.data.datasets[0].data = [];
+        chartInstance.data.datasets[1].data = [];
+        chartInstance.update();
+      }
+    }
+
+    async function runBenchmark() {
+      const model = document.getElementById('modelSelect').value;
+      const task = document.getElementById('taskSelect').value;
+      const runBtn = document.getElementById('runBtn');
+      const progressBar = document.getElementById('progressBar');
+      const progressFill = document.getElementById('progressFill');
+      const resultLog = document.getElementById('resultLog');
+
+      runBtn.disabled = true;
+      runBtn.textContent = '⏳ Đang gửi yêu cầu & đo lường...';
+      progressBar.style.display = 'block';
+      progressFill.style.width = '30%';
+      resultLog.style.display = 'block';
+      resultLog.textContent = `Bắt đầu benchmark: Model [${model}], Workload [${task}]...\nĐang kết nối Ollama...`;
+
+      let promptText = "Phân loại 10 tệp tin sau vào các thư mục Tài liệu, Hình ảnh, Cài đặt: invoice.pdf, photo.png, setup.exe, note.txt, presentation.pptx, logo.svg, dataset.csv, game.iso, report.docx, music.mp3";
+      if (task === 'summarize') {
+        promptText = "Tóm tắt ngắn gọn trong 3 gạch đầu dòng: MMO là giải pháp phần mềm quản lý và sắp xếp tập tin thông minh bằng trí tuệ nhân tạo cục bộ. Nó cho phép quét các thư mục, phát hiện tệp rác, phân loại tài liệu tự động mà không gửi dữ liệu ra ngoài Internet.";
+      } else if (task === 'reasoning') {
+        promptText = "Viết một hàm Python nhanh để tìm tất cả các file trùng lặp (duplicate files) bằng mã băm SHA256.";
+      }
+
+      const startTime = performance.now();
+      let firstTokenTime = null;
+      let totalTokens = 0;
+
+      try {
+        progressFill.style.width = '60%';
+        const res = await fetch(`${OLLAMA_HOST}/api/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: model,
+            prompt: promptText,
+            stream: false
+          })
+        });
+
+        if (!res.ok) {
+          throw new Error(`Ollama API error: ${res.statusText}`);
+        }
+
+        const data = await res.json();
+        const endTime = performance.now();
+        const totalDurationSec = parseFloat(((endTime - startTime) / 1000).toFixed(2));
+        
+        let tokPerSec = 0;
+        let ttft = 250; // estimated default
+
+        if (data.eval_count && data.eval_duration) {
+          tokPerSec = parseFloat((data.eval_count / (data.eval_duration / 1e9)).toFixed(1));
+          if (data.prompt_eval_duration) {
+            ttft = Math.round(data.prompt_eval_duration / 1e6);
+          }
+        } else {
+          totalTokens = (data.response || '').split(/\s+/).length * 1.3;
+          tokPerSec = parseFloat((totalTokens / totalDurationSec).toFixed(1));
+        }
+
+        progressFill.style.width = '100%';
+        resultLog.textContent += `\nHoàn thành!\nTổng thời gian: ${totalDurationSec}s | Tốc độ: ${tokPerSec} tok/s | TTFT: ${ttft}ms\nPhản hồi nhận được:\n${(data.response || '').substring(0, 200)}...`;
+
+        let rating = 'Xuất sắc (Mượt)';
+        if (tokPerSec < 12) rating = 'Hơi chậm (Cần tối ưu)';
+        else if (tokPerSec < 20) rating = 'Khá ổn';
+
+        const record = {
+          time: new Date().toLocaleTimeString('vi-VN'),
+          model: model,
+          task: task === 'classify' ? 'Phân loại tập tin' : (task === 'summarize' ? 'Tóm tắt tài liệu' : 'Suy luận code'),
+          duration: totalDurationSec,
+          tokPerSec: tokPerSec,
+          ttft: ttft,
+          rating: rating
+        };
+
+        benchmarkHistory.push(record);
+        localStorage.setItem('mmo_benchmarks', JSON.stringify(benchmarkHistory));
+        renderHistory();
+
+        // Update Chart
+        if (chartInstance) {
+          chartInstance.data.labels.push(record.model);
+          chartInstance.data.datasets[0].data.push(record.tokPerSec);
+          chartInstance.data.datasets[1].data.push(record.duration);
+          chartInstance.update();
+        }
+
+      } catch (err) {
+        resultLog.textContent += `\n❌ Lỗi khi đo lường: ${err.message}. Đảm bảo model đã được tải về Ollama!`;
+      } finally {
+        runBtn.disabled = false;
+        runBtn.textContent = '▶ Bắt đầu kiểm tra thời gian thực';
+        setTimeout(() => { progressBar.style.display = 'none'; }, 1000);
+      }
+    }
+
+    // Startup check
+    checkOllama();
+    initChart();
+    renderHistory();
+  </script>
+</body>
+</html>

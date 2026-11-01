@@ -41,7 +41,7 @@ export const ModelSelector = ({
             Tuyển Chọn Mô Hình Nhỏ Chạy Cục Bộ (Ollama SLMs)
           </h3>
           <p className="text-xs text-slate-400 mt-0.5">
-            Các mô hình đã được tinh chỉnh tham số để chạy trực tiếp trên GTX 1650 (4GB VRAM) & 16GB RAM.
+            Các mô hình đã được tinh chỉnh tham số để tối ưu hóa trực tiếp trên phần cứng máy tính cá nhân (VRAM & RAM).
           </p>
         </div>
       </div>

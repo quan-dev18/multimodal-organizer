@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { VramGauge } from './components/preflight/VramGauge';
+import { OllamaBanner } from './components/preflight/OllamaBanner';
 import { MultiModelSelector } from './components/preflight/MultiModelSelector';
 import type { ModelItem, ModelCluster, BatchDownloadStatus } from './components/preflight/MultiModelSelector';
 import { BenchmarkCard } from './components/preflight/BenchmarkCard';
+import { ModelComparisonModal } from './components/preflight/ModelComparisonModal';
 import { MainApp } from './components/main/MainApp';
 import { ArrowRight, RefreshCw, CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 import { ThemeAndLangControls } from './lib/ThemeAndLangControls';
@@ -20,6 +22,7 @@ interface ToastNotification {
 export function App() {
   const { t } = useApp();
   const [isInPreflight, setIsInPreflight] = useState<boolean>(true);
+  const [isComparisonOpen, setIsComparisonOpen] = useState<boolean>(false);
   const [hardware, setHardware] = useState<any>(null);
   const [ollamaStatus, setOllamaStatus] = useState<any>(null);
   const [clusters, setClusters] = useState<ModelCluster[]>([]);
@@ -27,10 +30,17 @@ export function App() {
   const [storagePath, setStoragePath] = useState<string>("D:\\OllamaModels");
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
   
-  // Selected models
-  const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(
-    new Set(["qwen2.5:1.5b", "bge-m3"])
-  );
+  // Selected models (persist user selection so it is never forcibly overwritten)
+  const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('mmo_selected_models');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return new Set(parsed);
+      }
+    } catch {}
+    return new Set(["qwen2.5:1.5b"]);
+  });
 
   // Batch download state
   const [batchStatus, setBatchStatus] = useState<BatchDownloadStatus>({
@@ -76,19 +86,7 @@ export function App() {
       if (hwRes) setHardware(hwRes);
       if (ollamaRes) {
         setOllamaStatus(ollamaRes);
-        // Sync active selection with actually installed models if available
-        if (ollamaRes.models && ollamaRes.models.length > 0) {
-          const installedTags: string[] = ollamaRes.models.map((m: any) => m.name);
-          setSelectedModelIds(prev => {
-            const matched = new Set<string>();
-            catRes?.forEach((c: ModelItem) => {
-              if (installedTags.some(t => t.includes(c.tag) || c.tag.includes(t))) {
-                matched.add(c.id);
-              }
-            });
-            return matched.size > 0 ? matched : prev;
-          });
-        }
+// Respect user explicit model selection; do not auto-force all installed models
       }
       if (clusRes && clusRes.length > 0) setClusters(clusRes);
       if (catRes && catRes.length > 0) setFlatCatalog(catRes);
@@ -110,11 +108,18 @@ export function App() {
     sfx.toggle();
     const next = new Set(selectedModelIds);
     if (next.has(m.id)) {
-      if (next.size > 1) next.delete(m.id);
+      if (next.size > 1) {
+        next.delete(m.id);
+      } else {
+        showToast("Phải chọn ít nhất 1 mô hình hoạt động!", "info");
+      }
     } else {
       next.add(m.id);
     }
     setSelectedModelIds(next);
+    try {
+      localStorage.setItem('mmo_selected_models', JSON.stringify(Array.from(next)));
+    } catch {}
   };
 
   // Open native Windows folder selector dialog
@@ -196,6 +201,16 @@ export function App() {
   // Batch Download all uninstalled models sequentially
   const handleDownloadAllSelected = async () => {
     sfx.click();
+    if (!ollamaStatus?.is_running) {
+      sfx.error();
+      showToast(
+        ollamaStatus?.is_installed
+          ? "Dịch vụ Ollama chưa chạy! Hãy bấm 'Tự động bật Ollama ngay' ở thanh cảnh báo phía trên."
+          : "Chưa cài đặt Ollama! Vui lòng tải và cài đặt Ollama từ ollama.com trước khi tải mô hình.",
+        "error"
+      );
+      return;
+    }
     const installedList: string[] = ollamaStatus?.models?.map((m: any) => m.name) || [];
     const modelsToDownload = flatCatalog.filter(
       m => selectedModelIds.has(m.id) && !installedList.some(tag => tag.includes(m.tag) || m.tag.includes(tag))
@@ -262,6 +277,16 @@ export function App() {
   // Download single model
   const handleDownloadSingleModel = async (modelTag: string) => {
     sfx.click();
+    if (!ollamaStatus?.is_running) {
+      sfx.error();
+      showToast(
+        ollamaStatus?.is_installed
+          ? "Dịch vụ Ollama chưa chạy! Hãy bấm 'Tự động bật Ollama ngay' ở thanh cảnh báo phía trên."
+          : "Chưa cài đặt Ollama! Vui lòng tải và cài đặt Ollama từ ollama.com trước khi tải mô hình.",
+        "error"
+      );
+      return;
+    }
     setBatchStatus({
       isDownloading: true,
       currentModelTag: modelTag,
@@ -322,9 +347,16 @@ export function App() {
     return res.json();
   };
 
-  const totalVram = hardware?.gpu?.total_vram_gb || 4.0;
-  const usedVramOther = hardware?.gpu?.used_vram_gb ? Math.max(hardware.gpu.used_vram_gb - 1.6, 0.8) : 0.8;
-  const gpuName = hardware?.gpu?.name || "NVIDIA GeForce GTX 1650";
+  const hasDedicatedGpu = !!hardware?.gpu?.has_gpu;
+  const totalVram = hasDedicatedGpu 
+    ? (hardware?.gpu?.total_vram_gb || 4.0) 
+    : (hardware?.ram?.total_gb ? Math.round(hardware.ram.total_gb * 0.4 * 10) / 10 : 4.0);
+  const usedVramOther = hasDedicatedGpu 
+    ? (hardware?.gpu?.used_vram_gb || 0.8) 
+    : (hardware?.ram?.used_gb ? Math.round(hardware.ram.used_gb * 0.2 * 10) / 10 : 0.8);
+  const gpuName = hasDedicatedGpu 
+    ? (hardware?.gpu?.name || "Card đồ họa chuyên dụng (GPU)") 
+    : "Đồ họa tích hợp (Chia sẻ bộ nhớ RAM)";
 
   const selectedModelsList = flatCatalog.filter(m => selectedModelIds.has(m.id));
   const totalModelVram = selectedModelsList.reduce((acc, m) => acc + (m.est_vram_gb || 1.0), 0);
@@ -341,6 +373,9 @@ export function App() {
           setIsInPreflight(true);
         }}
         activeModelNames={selectedModelsList.map(m => m.name)}
+        activeModelTags={selectedModelsList.map(m => m.tag)}
+        primaryModelTag={primaryModel.tag}
+        hardware={hardware}
       />
     );
   }
@@ -414,6 +449,29 @@ export function App() {
 
           <button
             onClick={() => {
+              sfx.click();
+              setIsComparisonOpen(true);
+            }}
+            className="px-3 py-1.5 bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 rounded-lg text-xs flex items-center gap-1.5 border border-indigo-800/80 transition-colors cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            So sánh đa mô hình
+          </button>
+
+          <button
+            onClick={() => {
+              // 0. Validation check: Ollama must be running
+              if (!ollamaStatus?.is_running) {
+                sfx.error();
+                showToast(
+                  ollamaStatus?.is_installed
+                    ? "Không thể bắt đầu: Dịch vụ Ollama chưa chạy! Hãy bấm 'Tự động bật Ollama ngay' ở phía trên."
+                    : "Không thể bắt đầu: Chưa cài đặt Ollama! Vui lòng cài đặt từ ollama.com trước.",
+                  "error"
+                );
+                return;
+              }
+
               // 1. Validation check: Must select at least 1 model
               if (selectedModelsList.length === 0) {
                 sfx.error();
@@ -452,6 +510,14 @@ export function App() {
 
       {/* Main Content Area */}
       <main className="space-y-6 my-6">
+        {/* Ollama Status & Health Alert Banner */}
+        <OllamaBanner
+          status={ollamaStatus}
+          loading={loadingHardware}
+          onRefresh={refreshSystemInfo}
+          apiBase={API_BASE}
+        />
+
         {/* 1. STICKY VRAM GAUGE BAR */}
         <div className="sticky top-4 z-40 shadow-xl">
           <VramGauge
@@ -493,13 +559,24 @@ export function App() {
       <footer className="pt-4 border-t border-zinc-900 flex items-center justify-between text-xs text-zinc-400 font-sans">
         <div className="flex items-center gap-4">
           <span>GPU: <span className="text-zinc-300 font-medium">{gpuName}</span> ({totalVram} GB)</span>
-          <span>RAM: <span className="text-zinc-300 font-medium">{hardware?.ram?.total_gb || 16} GB</span> (Trống: {hardware?.ram?.free_gb || 6} GB)</span>
-          <span>CPU: <span className="text-zinc-300 font-medium">{hardware?.cpu?.logical_cores || 8} luồng</span></span>
+          <span>RAM: <span className="text-zinc-300 font-medium">{hardware?.ram?.total_gb ? `${hardware.ram.total_gb} GB` : 'Đang đọc...'}</span> (Trống: {hardware?.ram?.free_gb ? `${hardware.ram.free_gb} GB` : '--'})</span>
+          <span>CPU: <span className="text-zinc-300 font-medium">{hardware?.cpu?.logical_cores || hardware?.cpu?.cores || '--'} luồng</span>{hardware?.cpu?.percent != null ? ` (${hardware.cpu.percent}%)` : ''}</span>
         </div>
         <div className="text-zinc-400 text-xs">
           MMO Desktop · Trải nghiệm mượt mà, tối ưu phần cứng cục bộ
         </div>
       </footer>
+
+      {/* Multi-Model Comparison Modal */}
+      <ModelComparisonModal
+        isOpen={isComparisonOpen}
+        onClose={() => setIsComparisonOpen(false)}
+        models={flatCatalog}
+        selectedModelIds={selectedModelIds}
+        installedModels={installedModelsList}
+        onToggleModel={handleToggleModel}
+        onDownloadSingleModel={handleDownloadSingleModel}
+      />
     </div>
   );
 }
