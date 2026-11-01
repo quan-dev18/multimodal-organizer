@@ -97,15 +97,51 @@ if __name__ == "__main__":
     # Start with splash screen that polls for backend ready, avoiding 127.0.0.1 refused
     target_url = splash_file if os.path.exists(splash_file) else "http://127.0.0.1:8001"
 
-    window = webview.create_window(
-        title="MMO — Multimodal Organizer Desktop",
-        url=target_url,
-        width=1280,
-        height=820,
-        min_size=(1024, 680),
-        background_color='#09090b',
-        text_select=True,
-        zoomable=True
-    )
-    
-    webview.start(debug=False)
+    # Try native GUI via pywebview first; if GTK/QT bindings are missing, fallback to App Window
+    opened = False
+    try:
+        import webview
+        window = webview.create_window(
+            title="MMO — Multimodal Organizer Desktop",
+            url=target_url,
+            width=1280,
+            height=820,
+            min_size=(1024, 680),
+            background_color='#09090b',
+            text_select=True,
+            zoomable=True
+        )
+        webview.start(debug=False)
+        opened = True
+    except Exception as e:
+        print(f"[Desktop Host] pywebview GUI runtime unavailable ({e}). Fallback to Native Chromium Window...", file=sys.stderr)
+
+    if not opened:
+        # Fallback to standalone Frameless App Window via Chromium/Brave
+        target_app_url = "http://127.0.0.1:8001"
+        # Wait until backend is fully up
+        for _ in range(25):
+            try:
+                if requests.get("http://127.0.0.1:8001/api/health", timeout=0.5).status_code == 200:
+                    break
+            except Exception:
+                time.sleep(0.2)
+
+        import shutil
+        browser_bin = shutil.which("chromium") or shutil.which("brave") or shutil.which("google-chrome")
+        if browser_bin:
+            app_proc = subprocess.Popen([
+                browser_bin,
+                f"--app={target_app_url}",
+                f"--window-size=1280,820",
+                f"--user-data-dir={os.path.expanduser('~/.cache/mmo_desktop_profile')}",
+                "--class=mmo_desktop",
+                "--name=mmo_desktop"
+            ])
+            app_proc.wait()
+        else:
+            import webbrowser
+            webbrowser.open(target_app_url)
+            # Keep process alive while user uses the app
+            while True:
+                time.sleep(2)
