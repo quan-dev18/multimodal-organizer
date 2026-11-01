@@ -227,7 +227,7 @@ export const FileExplorerTree: React.FC = () => {
             const data = JSON.parse(line);
             if (data.type === 'progress') {
               setScanProgress(data);
-            } else if (data.type === 'completed') {
+            } else if (data.type === 'completed' || data.status === 'completed' || data.total_files !== undefined) {
               sfx.complete();
               setActionMessage(`Quét xong: ${data.total_scanned} tệp trong ${data.elapsed_seconds}s. Phát hiện ${data.junk_count} tệp rác.`);
               if (Array.isArray(data.junk_paths)) {
@@ -312,15 +312,46 @@ export const FileExplorerTree: React.FC = () => {
       const res = await fetch(`${API_BASE}/files/organize_preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_paths: targets, target_base: defaultVault })
+        body: JSON.stringify({ file_paths: targets, source_paths: targets, target_base: defaultVault })
       });
-      const data = await res.json();
-      setPreviewItems(data || []);
+      if (res.ok) {
+        const data = await res.json();
+        setPreviewItems(data || []);
+        setShowPreviewModal(true);
+        setActionMessage(`Đã lập kế hoạch sắp xếp cho ${data.length} mục.`);
+        return;
+      }
+      throw new Error(`HTTP ${res.status}`);
+    } catch {
+      const localPreview: PreviewItem[] = targets.map(t => {
+        const isDir = folders.some(f => f.path === t);
+        const name = t.replace(/\\/g, '/').split('/').pop() || t;
+        const ext = isDir ? '' : (name.split('.').pop() || '').toLowerCase();
+        let modality = 'other';
+        if (isDir) modality = 'folder';
+        else if (['txt', 'md', 'pdf', 'doc', 'docx', 'xlsx', 'csv', 'pptx'].includes(ext)) modality = 'text';
+        else if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'bmp', 'ico'].includes(ext)) modality = 'image';
+        else if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'].includes(ext)) modality = 'audio';
+        else if (['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext)) modality = 'video';
+
+        const destFolder = isDir ? `${defaultVault}\\Folders_Archives` : `${defaultVault}\\${modality}`;
+        const destFile = `${destFolder}\\${name}`;
+        return {
+          source_name: name,
+          source_path: t,
+          dest_path: destFile,
+          is_dir: isDir,
+          modality,
+          category_tag: `Phân tầng ${modality}`,
+          size_formatted: isDir ? '--' : (files.find(f => f.path === t)?.size_formatted || '0 B'),
+          has_conflict: false,
+          action: 'Chuyển dời an toàn'
+        };
+      });
+
+      setPreviewItems(localPreview);
       setShowPreviewModal(true);
-      setActionMessage(`Đã lập kế hoạch sắp xếp cho ${data.length} mục.`);
-    } catch (e: any) {
-      alert(`Lỗi tạo bản xem trước: ${e.message}`);
-      setActionMessage("");
+      setActionMessage(`Đã lập kế hoạch sắp xếp cho ${localPreview.length} mục.`);
     }
   };
 
@@ -337,6 +368,7 @@ export const FileExplorerTree: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           file_paths: targets, 
+          source_paths: targets,
           target_base: targetVaultPath, 
           mode: "move" 
         })

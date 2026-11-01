@@ -12,7 +12,9 @@ from typing import Optional, List, Dict, Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from hardware import get_hardware_info, check_ollama_status
+import threading
+import webbrowser
+from hardware import get_hardware_info, check_ollama_status, ensure_ollama_running, find_ollama_executable
 from models_catalog import get_all_model_clusters, get_flat_catalog
 from file_manager import (
     get_system_drives, 
@@ -26,6 +28,9 @@ from file_manager import (
 )
 
 app = FastAPI(title="MMO Multimodal Core Engine", version="1.2.0")
+
+# Automatically ensure Ollama daemon is running on backend launch
+threading.Thread(target=ensure_ollama_running, daemon=True).start()
 
 app.add_middleware(
     CORSMiddleware,
@@ -158,6 +163,26 @@ def api_system_drives():
 def api_ollama_status():
     return check_ollama_status()
 
+@app.post("/api/ollama/start")
+def api_ollama_start():
+    result = ensure_ollama_running(timeout=12.0)
+    current_status = check_ollama_status()
+    return {
+        "success": result.get("success", False),
+        "message": result.get("message", ""),
+        "status": current_status
+    }
+
+@app.get("/api/ollama/install")
+@app.post("/api/ollama/install")
+def api_ollama_install():
+    url = "https://ollama.com/download"
+    try:
+        webbrowser.open(url)
+        return {"success": True, "url": url, "message": "Đã mở trình duyệt tải Ollama."}
+    except Exception as e:
+        return {"success": False, "url": url, "message": f"Không thể mở trình duyệt: {str(e)}"}
+
 @app.get("/api/models/clusters")
 def api_models_clusters():
     return get_all_model_clusters()
@@ -225,7 +250,7 @@ def api_select_folder(req: Optional[SelectFolderRequest] = None):
 # Delete Model via Ollama API
 @app.post("/api/models/delete")
 def api_delete_model(req: DeleteModelRequest):
-    ollama_url = "http://localhost:11434/api/delete"
+    ollama_url = "http://127.0.0.1:11434/api/delete"
     try:
         r = requests.delete(ollama_url, json={"name": req.model_name}, timeout=15)
         if r.status_code == 200:
@@ -237,7 +262,7 @@ def api_delete_model(req: DeleteModelRequest):
 
 @app.post("/api/ollama/pull")
 def api_ollama_pull(req: PullRequest):
-    ollama_url = "http://localhost:11434/api/pull"
+    ollama_url = "http://127.0.0.1:11434/api/pull"
     def generate():
         try:
             with requests.post(ollama_url, json={"name": req.model_name}, stream=True, timeout=1800) as r:
@@ -254,7 +279,7 @@ def api_ollama_pull(req: PullRequest):
 
 @app.post("/api/models/benchmark")
 def api_benchmark(req: BenchmarkRequest):
-    ollama_url = "http://localhost:11434/api/generate"
+    ollama_url = "http://127.0.0.1:11434/api/generate"
     start_time = time.time()
     try:
         response = requests.post(
@@ -301,76 +326,101 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
         root_dir = req.directory
         start_time = time.time()
         
-        # Phase 1: Quick tree estimation (count top level items to estimate depth)
-        estimated_total_files = 0
-        try:
-            # For whole drive (C:\, D:\), sample reasonable baseline based on drive usage
-            if len(root_dir.rstrip("\\")) <= 2:
-                # Root drive scan: C:\ or D:\
-                import psutil
-                usage = psutil.disk_usage(root_dir)
-                # Average file size ~300KB
-                estimated_total_files = max(int((usage.used / 1024) / 350), 50000)
-            else:
-                # Count files in immediate 2 levels
-                for root, dirs, files in os.walk(root_dir):
-                    estimated_total_files += len(files)
-                    if estimated_total_files > 50000:
-                        break
-        except:
-            estimated_total_files = 30000
+        # Immediate start event so UI displays progress instantly
+        yield json.dumps({
+            "type": "progress",
+            "scanned_count": 0,
+            "current_file": "Bắt đầu quét cấu trúc...",
+            "current_folder": root_dir,
+            "junk_count": 0,
+            "hidden_count": 0,
+            "elapsed_seconds": 0.0,
+            "estimated_seconds_left": 3.0,
+            "percent": 2.0,
+            "speed": 0
+        }) + "\n"
+
+        is_root_drive = len(root_dir.rstrip("\\")) <= 2
+        base_depth = root_dir.rstrip("\\").count(os.sep)
+        MAX_DEPTH = 3 if is_root_drive else 8
+        MAX_FILES = 15000 if is_root_drive else 80000
+
+        EXCLUDED_DIRS = {
+            "$recycle.bin", "system volume information", "config.msi",
+            "node_modules", ".git", "target", "build", "dist", ".cache",
+            "__pycache__", ".venv", "venv", "appdata", "androidvirtual", "dockerres"
+        }
+
+        estimated_total_files = 10000 if is_root_drive else 5000
 
         scanned_count = 0
         total_bytes = 0
         junk_count = 0
         hidden_count = 0
         junk_paths = []
+        stopped_early = False
 
-        for dirpath, dirnames, filenames in os.walk(root_dir):
-            current_folder = dirpath
-            for fname in filenames:
-                scanned_count += 1
-                fpath = os.path.join(dirpath, fname)
-                try:
-                    fsize = os.path.getsize(fpath)
-                    total_bytes += fsize
-                except:
-                    pass
+        try:
+            for dirpath, dirnames, filenames in os.walk(root_dir):
+                # Depth limiter
+                current_depth = dirpath.rstrip(os.sep).count(os.sep) - base_depth
+                if current_depth >= MAX_DEPTH:
+                    dirnames.clear()
+                else:
+                    # Filter out heavy and system directories
+                    dirnames[:] = [d for d in dirnames if d.lower() not in EXCLUDED_DIRS and not d.startswith(".")]
 
-                ext = os.path.splitext(fname)[1].lower().lstrip(".")
-                is_junk = ext in ["tmp", "log", "bak", "cache", "crdownload", "chk", "dmp"] or fname.lower() in ["thumbs.db", ".ds_store", "desktop.ini"] or fname.startswith("~$")
-                if is_junk:
-                    junk_count += 1
-                    junk_paths.append(fpath)
+                current_folder = dirpath
+                for fname in filenames:
+                    scanned_count += 1
+                    fpath = os.path.join(dirpath, fname)
+                    try:
+                        fsize = os.path.getsize(fpath)
+                        total_bytes += fsize
+                    except:
+                        pass
 
-                if fname.startswith("."):
-                    hidden_count += 1
+                    ext = os.path.splitext(fname)[1].lower().lstrip(".")
+                    is_junk = ext in ["tmp", "log", "bak", "cache", "crdownload", "chk", "dmp"] or fname.lower() in ["thumbs.db", ".ds_store", "desktop.ini"] or fname.startswith("~$")
+                    if is_junk:
+                        junk_count += 1
+                        junk_paths.append(fpath)
 
-                # Update progress every 80 items
-                if scanned_count % 80 == 0 or scanned_count <= 20:
-                    elapsed = max(time.time() - start_time, 0.1)
-                    speed_files_per_sec = scanned_count / elapsed
-                    
-                    # Dynamically adjust total estimate if exceeded
-                    if scanned_count >= estimated_total_files:
-                        estimated_total_files = int(scanned_count * 1.3)
+                    if fname.startswith("."):
+                        hidden_count += 1
 
-                    percent = min(round((scanned_count / max(estimated_total_files, 1)) * 100, 1), 99.0)
-                    remaining_files = max(estimated_total_files - scanned_count, 0)
-                    est_time_sec = round(remaining_files / max(speed_files_per_sec, 1), 1)
+                    # Update progress every 50 items
+                    if scanned_count % 50 == 0 or scanned_count <= 20:
+                        elapsed = max(time.time() - start_time, 0.1)
+                        speed_files_per_sec = scanned_count / elapsed
+                        
+                        if scanned_count >= estimated_total_files:
+                            estimated_total_files = int(scanned_count * 1.2)
 
-                    yield json.dumps({
-                        "type": "progress",
-                        "scanned_count": scanned_count,
-                        "current_file": fname,
-                        "current_folder": current_folder,
-                        "junk_count": junk_count,
-                        "hidden_count": hidden_count,
-                        "elapsed_seconds": round(elapsed, 1),
-                        "estimated_seconds_left": est_time_sec,
-                        "percent": percent,
-                        "speed": round(speed_files_per_sec)
-                    }) + "\n"
+                        percent = min(round((scanned_count / max(estimated_total_files, 1)) * 100, 1), 98.0)
+                        remaining_files = max(estimated_total_files - scanned_count, 0)
+                        est_time_sec = round(remaining_files / max(speed_files_per_sec, 1), 1)
+
+                        yield json.dumps({
+                            "type": "progress",
+                            "scanned_count": scanned_count,
+                            "current_file": fname,
+                            "current_folder": current_folder,
+                            "junk_count": junk_count,
+                            "hidden_count": hidden_count,
+                            "elapsed_seconds": round(elapsed, 1),
+                            "estimated_seconds_left": est_time_sec,
+                            "percent": percent,
+                            "speed": round(speed_files_per_sec)
+                        }) + "\n"
+
+                    if scanned_count >= MAX_FILES:
+                        stopped_early = True
+                        break
+                if stopped_early:
+                    break
+        except Exception as e:
+            pass
 
         elapsed_total = round(time.time() - start_time, 2)
         yield json.dumps({
@@ -380,7 +430,8 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
             "junk_count": junk_count,
             "hidden_count": hidden_count,
             "elapsed_seconds": elapsed_total,
-            "junk_paths": junk_paths
+            "junk_paths": junk_paths,
+            "stopped_early": stopped_early
         }) + "\n"
 
     return StreamingResponse(scan_generator(), media_type="application/x-ndjson")
@@ -406,7 +457,7 @@ def api_get_temp_status():
 
 @app.post("/api/system/clean_temp_stream")
 def api_clean_system_temp_stream(req: Optional[CleanTempRequest] = None):
-    from file_manager import get_system_temp_status, run_external_temp_cleaner, format_bytes
+    from file_manager import get_system_temp_status, format_bytes
     target_ids = set(req.zones) if req and req.zones else {"user_temp", "win_temp", "crash_dumps", "prefetch"}
     
     def clean_generator():
@@ -483,8 +534,6 @@ def api_clean_system_temp_stream(req: Optional[CleanTempRequest] = None):
                         "est_left": est_left
                     }) + "\n"
         
-        # Trigger external tool if needed
-        external_res = run_external_temp_cleaner()
         elapsed_total = round(time.time() - start_time, 2)
         
         yield json.dumps({
@@ -633,11 +682,18 @@ def api_save_rules(rules: List[RuleItemModel]):
 
 class ChatRequest(BaseModel):
     message: str
-    model: Optional[str] = "llama3.2:1b"
+    model: Optional[str] = None
 
 @app.post("/api/ai/chat")
 def api_ai_chat(req: ChatRequest):
-    model = req.model if req.model else "llama3.2:1b"
+    model = req.model
+    if not model or model == "default":
+        ollama_status = check_ollama_status()
+        installed_models = [m["name"] for m in ollama_status.get("models", [])]
+        if installed_models:
+            model = installed_models[0]
+        else:
+            model = "qwen2.5:1.5b"
     system_prompt = (
         "Bạn là Trợ lý AI Thông Minh tích hợp của ứng dụng MMO Desktop (Multimodal Organizer). "
         "Nhiệm vụ của bạn là hỗ trợ người dùng phân loại tệp tin, dọn dẹp hệ thống, tìm kiếm tệp ngữ nghĩa, "

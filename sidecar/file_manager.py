@@ -155,7 +155,7 @@ def scan_directory_tree(
         "files": files
     }
 
-# Safe Trash & Temp Cleanup with Windows Recycle Bin & TempCleaner.exe
+# Safe Trash & Native Built-in Temp Cleanup Engine
 PROTECTED_PATHS = [
     "c:\\windows\\system32", "c:\\windows\\syswow64", 
     "c:\\system volume information", "c:\\$recycle.bin"
@@ -239,37 +239,16 @@ def clean_system_temp_native(target_ids: Optional[List[str]] = None) -> Dict[str
         except Exception:
             pass
 
-    # Also trigger C:\Tool\TempCleaner.exe if available for 100% thorough completion
-    external_res = run_external_temp_cleaner()
-
     return {
         "success": True,
         "cleaned_count": cleaned_count,
         "freed_formatted": format_bytes(freed_bytes),
         "freed_mb": round(freed_bytes / (1024**2), 1),
         "locked_skipped": errors,
-        "external_tool_status": external_res.get("message", ""),
-        "message": f"Đã dọn sạch {cleaned_count} tệp bộ nhớ tạm ({format_bytes(freed_bytes)}). Tệp đang bị phần mềm khác khóa đã được bỏ qua an toàn!"
+        "message": f"Đã dọn sạch {cleaned_count} tệp bộ nhớ tạm ({format_bytes(freed_bytes)}). Tệp đang bị phần mềm khác khóa ({errors}) đã được bỏ qua an toàn!"
     }
 
-def run_external_temp_cleaner() -> Dict[str, Any]:
-    """Runs C:\Tool\TempCleaner.exe to thoroughly clear system and user temp files"""
-    cleaner_path = r"C:\Tool\TempCleaner.exe"
-    if not os.path.exists(cleaner_path):
-        return {"success": False, "message": "Không tìm thấy công cụ TempCleaner tại C:\\Tool\\TempCleaner.exe"}
 
-    try:
-        proc = subprocess.Popen([cleaner_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        ret = proc.wait(timeout=30)
-        return {
-            "success": True, 
-            "message": "Đã chạy TempCleaner.exe thành công, dọn sạch hoàn toàn các thư mục Temp hệ thống và ứng dụng rác!"
-        }
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        return {"success": True, "message": "TempCleaner.exe đã thực hiện dọn dẹp các thư mục Temp hệ thống."}
-    except Exception as e:
-        return {"success": False, "message": f"Lỗi chạy TempCleaner: {str(e)}"}
 
 def safe_clean_trash(file_paths: List[str], clean_system_temp: bool = False) -> Dict[str, Any]:
     cleaned = []
@@ -277,9 +256,7 @@ def safe_clean_trash(file_paths: List[str], clean_system_temp: bool = False) -> 
     blocked = []
     temp_cleaner_result = None
 
-    # Optional: Run C:\Tool\TempCleaner.exe for full system Temp cleaning
-    if clean_system_temp or not file_paths:
-        temp_cleaner_result = run_external_temp_cleaner()
+    # System temp cleaning is handled directly via clean_system_temp_native
 
     for fp in file_paths:
         lower_fp = fp.lower()
@@ -306,9 +283,6 @@ def safe_clean_trash(file_paths: List[str], clean_system_temp: bool = False) -> 
             failed.append({"path": fp, "error": str(e)})
 
     msg = f"Đã dọn sạch {len(cleaned)} tệp rác vào Thùng rác Recycle Bin."
-    if temp_cleaner_result and temp_cleaner_result.get("success"):
-        msg += " Đồng thời TempCleaner.exe đã dọn dẹp sâu toàn bộ Temp hệ thống!"
-
     return {
         "success": True,
         "message": msg,
@@ -317,11 +291,13 @@ def safe_clean_trash(file_paths: List[str], clean_system_temp: bool = False) -> 
         "blocked_count": len(blocked),
         "cleaned_files": cleaned,
         "failed_files": failed,
-        "blocked_files": blocked,
-        "temp_cleaner": temp_cleaner_result
+        "blocked_files": blocked
     }
 
-from ai_organizer import analyze_file_intent
+try:
+    from ai_organizer import analyze_file_intent
+except ImportError:
+    from sidecar.ai_organizer import analyze_file_intent
 
 def generate_organize_preview(file_paths: List[str], target_base_dir: str) -> List[Dict[str, Any]]:
     preview_items = []
