@@ -168,9 +168,15 @@ def get_system_temp_status() -> List[Dict[str, Any]]:
     prefetch = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Prefetch")
     crash_dumps = os.path.join(os.environ.get("LOCALAPPDATA", ""), "CrashDumps")
 
+    local_app = os.environ.get("LOCALAPPDATA", "")
+    d3ds_cache = os.path.join(local_app, "D3DSCache")
+    nvidia_cache = os.path.join(local_app, "NVIDIA", "DXCache")
+    amd_cache = os.path.join(local_app, "AMD", "DxCache")
+
     zones = [
         {"id": "user_temp", "name": "User Temp (%TEMP%)", "path": user_temp, "description": "Tệp tạm của các phần mềm và ứng dụng đang chạy"},
         {"id": "win_temp", "name": "Windows System Temp", "path": win_temp, "description": "Bộ nhớ tạm của hệ điều hành Windows"},
+        {"id": "shader_cache", "name": "DirectX & GPU Shader Cache", "path": d3ds_cache if os.path.exists(d3ds_cache) else (nvidia_cache if os.path.exists(nvidia_cache) else amd_cache), "description": "Bộ nhớ đệm đồ họa shader game & DirectX (D3DSCache)"},
         {"id": "crash_dumps", "name": "Windows Crash Dumps", "path": crash_dumps, "description": "Tệp ghi nhật ký lỗi ứng dụng dung lượng lớn"},
         {"id": "prefetch", "name": "Windows Prefetch Cache", "path": prefetch, "description": "Bộ nhớ đệm khởi động nhanh Windows"}
     ]
@@ -221,21 +227,22 @@ def clean_system_temp_native(target_ids: Optional[List[str]] = None) -> Dict[str
             continue
 
         try:
-            for item in os.listdir(p):
-                full_item = os.path.join(p, item)
-                try:
-                    if os.path.isfile(full_item) or os.path.islink(full_item):
-                        sz = os.path.getsize(full_item)
-                        os.remove(full_item)
+            for dirpath, dirnames, filenames in os.walk(p, topdown=False):
+                for fname in filenames:
+                    fpath = os.path.join(dirpath, fname)
+                    try:
+                        sz = os.path.getsize(fpath)
+                        os.remove(fpath)
                         cleaned_count += 1
                         freed_bytes += sz
-                    elif os.path.isdir(full_item):
-                        # Clean inside directory or remove dir if unneeded
-                        shutil.rmtree(full_item, ignore_errors=True)
-                        cleaned_count += 1
-                except Exception:
-                    # Locked by running process
-                    errors += 1
+                    except Exception:
+                        errors += 1
+                for dname in dirnames:
+                    dpath = os.path.join(dirpath, dname)
+                    try:
+                        os.rmdir(dpath)
+                    except Exception:
+                        pass
         except Exception:
             pass
 

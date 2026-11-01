@@ -493,47 +493,44 @@ def api_clean_system_temp_stream(req: Optional[CleanTempRequest] = None):
             if not os.path.exists(p):
                 continue
             
-            try:
-                entries = os.listdir(p)
-            except Exception:
-                continue
-                
-            for item in entries:
-                full_item = os.path.join(p, item)
-                try:
-                    if os.path.isfile(full_item) or os.path.islink(full_item):
+            for dirpath, dirnames, filenames in os.walk(p, topdown=False):
+                for fname in filenames:
+                    full_item = os.path.join(dirpath, fname)
+                    try:
                         sz = os.path.getsize(full_item)
                         os.remove(full_item)
                         cleaned_count += 1
                         freed_bytes += sz
-                    elif os.path.isdir(full_item):
-                        shutil.rmtree(full_item, ignore_errors=True)
-                        cleaned_count += 1
-                except Exception:
-                    locked_count += 1
-                    
-                # Yield progress every few items (handle both cleaned and locked items)
-                processed_count = cleaned_count + locked_count
-                if processed_count % 5 == 0 or processed_count <= 10:
-                    elapsed = max(time.time() - start_time, 0.1)
-                    speed = max(processed_count / elapsed, 1)
-                    percent = min(round((processed_count / total_items) * 100, 1), 99.0)
-                    rem_items = max(total_items - processed_count, 0)
-                    est_left = round(rem_items / speed, 1)
-                    
-                    yield json.dumps({
-                        "type": "progress",
-                        "current_zone": z["name"],
-                        "current_file": item,
-                        "cleaned_count": cleaned_count,
-                        "total_items": total_items,
-                        "freed_mb": round(freed_bytes / (1024**2), 1),
-                        "locked_count": locked_count,
-                        "percent": percent,
-                        "elapsed": round(elapsed, 1),
-                        "est_left": est_left
-                    }) + "\n"
-        
+                    except Exception:
+                        locked_count += 1
+
+                    processed_count = cleaned_count + locked_count
+                    if processed_count % 5 == 0 or processed_count <= 10:
+                        elapsed = max(time.time() - start_time, 0.1)
+                        speed = max(processed_count / elapsed, 1)
+                        percent = min(round((processed_count / total_items) * 100, 1), 99.0)
+                        rem_items = max(total_items - processed_count, 0)
+                        est_left = round(rem_items / speed, 1)
+
+                        yield json.dumps({
+                            "type": "progress",
+                            "current_zone": z["name"],
+                            "current_file": fname,
+                            "cleaned_count": cleaned_count,
+                            "total_items": total_items,
+                            "freed_mb": round(freed_bytes / (1024**2), 1),
+                            "locked_count": locked_count,
+                            "percent": percent,
+                            "elapsed": round(elapsed, 1),
+                            "est_left": est_left
+                        }) + "\n"
+
+                for dname in dirnames:
+                    dpath = os.path.join(dirpath, dname)
+                    try:
+                        os.rmdir(dpath)
+                    except Exception:
+                        pass
         elapsed_total = round(time.time() - start_time, 2)
         
         yield json.dumps({
