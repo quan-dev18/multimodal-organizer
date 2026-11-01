@@ -29,6 +29,7 @@ import { sfx } from '../../lib/sounds';
 const API_BASE = "http://127.0.0.1:8001/api";
 
 interface DriveInfo {
+  name?: string;
   device: string;
   mountpoint: string;
   fstype: string;
@@ -86,8 +87,12 @@ interface PreviewItem {
 export const FileExplorerTree: React.FC = () => {
   // Drives State
   const [drives, setDrives] = useState<DriveInfo[]>([]);
-  const [currentPath, setCurrentPath] = useState<string>("D:\\AI_NCKH");
-  const [pathInput, setPathInput] = useState<string>("D:\\AI_NCKH");
+  const [currentPath, setCurrentPath] = useState<string>(() => {
+    return localStorage.getItem('mmo_global_dir') || '/home/quandev';
+  });
+  const [pathInput, setPathInput] = useState<string>(() => {
+    return localStorage.getItem('mmo_global_dir') || '/home/quandev';
+  });
   const [parentPath, setParentPath] = useState<string | null>(null);
   
   // Folder Content State
@@ -156,7 +161,7 @@ export const FileExplorerTree: React.FC = () => {
     loadDirectory(currentPath);
   }, [showHidden]);
 
-  // Switch drive easily (C:, D:, USBs)
+  // Switch drive easily (Home, Root, USBs)
   const handleSelectDrive = (drivePath: string) => {
     sfx.click();
     loadDirectory(drivePath);
@@ -431,7 +436,9 @@ export const FileExplorerTree: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 shrink-0">
         {/* Drive Buttons */}
         {drives.map((d) => {
-          const isActive = currentPath.toLowerCase().startsWith(d.device.toLowerCase());
+          const isActive = d.device === '/' 
+            ? currentPath === '/' 
+            : currentPath.toLowerCase().startsWith(d.device.toLowerCase());
           const isWarning = d.percent > 85;
           return (
             <div
@@ -449,7 +456,7 @@ export const FileExplorerTree: React.FC = () => {
                     <HardDrive className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="font-semibold text-sm text-zinc-100 font-mono">{d.device}</span>
+                    <span className="font-semibold text-sm text-zinc-100 font-sans">{d.name || d.device}</span>
                     <span className="text-xs text-zinc-400 ml-2.5 font-sans">
                       Trống <strong className="text-zinc-200">{d.free_gb} GB</strong> / {d.total_gb} GB
                     </span>

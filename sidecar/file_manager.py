@@ -22,27 +22,77 @@ except ImportError:
         cpp_safe_transfer = lambda *args, **kwargs: False
 
 def get_system_drives() -> List[Dict[str, Any]]:
-    """Lists all available disk drives and mount points on Linux/Unix with usage metrics"""
+    """
+    Lists user-accessible storage drives and mount points on Linux/Unix/Windows.
+    Filters out virtual subvolumes (btrfs snapshots/subvols, pacman cache, log dirs, /boot)
+    to provide clean, clickable drive targets (Home, Root, USB / External drives).
+    """
     drives = []
     seen = set()
-    for part in psutil.disk_partitions(all=False):
-        try:
-            mp = part.mountpoint
-            if mp in seen:
-                continue
-            seen.add(mp)
-            usage = psutil.disk_usage(mp)
-            drives.append({
-                "device": part.device,
-                "mountpoint": mp,
-                "fstype": part.fstype,
-                "total_gb": round(usage.total / (1024**3), 1),
-                "used_gb": round(usage.used / (1024**3), 1),
-                "free_gb": round(usage.free / (1024**3), 1),
-                "percent": usage.percent
-            })
-        except Exception:
+
+    # 1. User Home Directory (The primary workspace in Linux)
+    home = os.path.expanduser("~")
+    try:
+        u = psutil.disk_usage(home)
+        drives.append({
+            "name": f"Home ({os.path.basename(home)})",
+            "device": home,
+            "mountpoint": home,
+            "fstype": "home",
+            "total_gb": round(u.total / (1024**3), 1),
+            "used_gb": round(u.used / (1024**3), 1),
+            "free_gb": round(u.free / (1024**3), 1),
+            "percent": u.percent
+        })
+        seen.add(home)
+    except Exception:
+        pass
+
+    # 2. Root Filesystem (/)
+    try:
+        u = psutil.disk_usage("/")
+        drives.append({
+            "name": "Root System (/)",
+            "device": "/",
+            "mountpoint": "/",
+            "fstype": "root",
+            "total_gb": round(u.total / (1024**3), 1),
+            "used_gb": round(u.used / (1024**3), 1),
+            "free_gb": round(u.free / (1024**3), 1),
+            "percent": u.percent
+        })
+        seen.add("/")
+    except Exception:
+        pass
+
+    # 3. External mounts & secondary drives (/run/media/..., /media/..., /mnt/..., Windows drive letters)
+    ignored_fs = {"tmpfs", "devtmpfs", "squashfs", "overlay", "iso9660", "vfat"}
+    for p in psutil.disk_partitions(all=False):
+        mp = p.mountpoint
+        if mp in seen or p.fstype in ignored_fs:
             continue
+        # Include real user media, external drives, or Windows drives (C:\, D:\)
+        is_windows_drive = (len(p.device) <= 3 and ":" in p.device)
+        is_external_linux = mp.startswith("/run/media") or mp.startswith("/media") or mp.startswith("/mnt")
+
+        if is_windows_drive or is_external_linux:
+            seen.add(mp)
+            try:
+                u = psutil.disk_usage(mp)
+                label = os.path.basename(mp) or p.device
+                drives.append({
+                    "name": f"Ổ đĩa ngoài ({label})",
+                    "device": mp,
+                    "mountpoint": mp,
+                    "fstype": p.fstype,
+                    "total_gb": round(u.total / (1024**3), 1),
+                    "used_gb": round(u.used / (1024**3), 1),
+                    "free_gb": round(u.free / (1024**3), 1),
+                    "percent": u.percent
+                })
+            except Exception:
+                pass
+
     return drives
 
 def calculate_checksum(file_path: str, block_size: int = 65536) -> str:

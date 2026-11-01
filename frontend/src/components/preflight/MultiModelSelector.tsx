@@ -84,7 +84,7 @@ export const MultiModelSelector: React.FC<MultiModelSelectorProps> = ({
             </div>
             <div className="flex items-center gap-2">
               <span className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-200 truncate max-w-md block">
-                {storagePath || "D:\\OllamaModels"}
+                {storagePath || "~/.ollama/models"}
               </span>
               <button
                 onClick={onOpenFolderPicker}

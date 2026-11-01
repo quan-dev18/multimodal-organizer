@@ -24,7 +24,9 @@ export function App() {
   const [ollamaStatus, setOllamaStatus] = useState<any>(null);
   const [clusters, setClusters] = useState<ModelCluster[]>([]);
   const [flatCatalog, setFlatCatalog] = useState<ModelItem[]>([]);
-  const [storagePath, setStoragePath] = useState<string>("D:\\OllamaModels");
+  const [storagePath, setStoragePath] = useState<string>(() => {
+    return localStorage.getItem('mmo_model_storage') || '/home/quandev/.ollama/models';
+  });
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
   
   // Selected models
