@@ -57,15 +57,45 @@ DOMAIN_RULES = {
     }
 }
 
+RULES_FILE = os.path.join(os.path.expanduser("~"), ".mmo_rules.json")
+
+def load_custom_rules() -> List[Dict[str, Any]]:
+    if os.path.exists(RULES_FILE):
+        try:
+            with open(RULES_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return sorted(data, key=lambda x: x.get("priority", 999))
+        except Exception:
+            pass
+    return []
+
 def analyze_file_intent(file_name: str, ext: str) -> Dict[str, str]:
     """
     Blazing fast hybrid analyzer:
-    Instant rule matching (< 0.1ms per file) ensuring UI NEVER freezes,
+    1. First checks custom user-defined rules from ~/.mmo_rules.json (persisted across sessions).
+    2. Falls back to instant domain heuristics (< 0.1ms per file) ensuring UI NEVER freezes,
     while accurately classifying GameDev, SourceCode, Office, and Media.
     """
     ext_clean = ext.lower().lstrip(".")
     name_lower = file_name.lower()
 
+    # 1. Custom User Rules Check
+    custom_rules = load_custom_rules()
+    for rule in custom_rules:
+        if not rule.get("enabled", True):
+            continue
+        rule_exts = [e.lower().lstrip(".") for e in rule.get("extensions", [])]
+        if ext_clean in rule_exts:
+            dest_folder = rule.get("dest_folder", "Custom_Folder")
+            domain_name = rule.get("domain", dest_folder).replace("_", " ").title()
+            return {
+                "main_folder": dest_folder,
+                "sub_folder": domain_name,
+                "context_tag": rule.get("name", "Quy tắc người dùng")
+            }
+
+    # 2. Built-in Domain Heuristics
     for domain_key, info in DOMAIN_RULES.items():
         if ext_clean in info["extensions"]:
             main_folder = info["folder"]

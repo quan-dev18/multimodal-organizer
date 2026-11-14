@@ -12,7 +12,10 @@ from typing import Optional, List, Dict, Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from hardware import get_hardware_info, check_ollama_status
+import atexit
+import threading
+import webbrowser
+from hardware import get_hardware_info, check_ollama_status, ensure_ollama_running, find_ollama_executable, unload_all_ollama_models
 from models_catalog import get_all_model_clusters, get_flat_catalog
 from file_manager import (
     get_system_drives, 
@@ -26,6 +29,22 @@ from file_manager import (
 )
 
 app = FastAPI(title="MMO Multimodal Core Engine", version="1.2.0")
+
+# Auto-cleanup: free VRAM at process exit
+atexit.register(unload_all_ollama_models)
+
+@app.on_event("startup")
+def on_startup():
+    # Purge any leftover zombie models from previous sessions on startup to free VRAM
+    threading.Thread(target=unload_all_ollama_models, daemon=True).start()
+
+@app.on_event("shutdown")
+def on_shutdown():
+    # Immediately release 100% of GPU VRAM when backend stops
+    unload_all_ollama_models()
+
+# Automatically ensure Ollama daemon is running on backend launch
+threading.Thread(target=ensure_ollama_running, daemon=True).start()
 
 app.add_middleware(
     CORSMiddleware,
@@ -158,6 +177,26 @@ def api_system_drives():
 def api_ollama_status():
     return check_ollama_status()
 
+@app.post("/api/ollama/start")
+def api_ollama_start():
+    result = ensure_ollama_running(timeout=12.0)
+    current_status = check_ollama_status()
+    return {
+        "success": result.get("success", False),
+        "message": result.get("message", ""),
+        "status": current_status
+    }
+
+@app.get("/api/ollama/install")
+@app.post("/api/ollama/install")
+def api_ollama_install():
+    url = "https://ollama.com/download"
+    try:
+        webbrowser.open(url)
+        return {"success": True, "url": url, "message": "Đã mở trình duyệt tải Ollama."}
+    except Exception as e:
+        return {"success": False, "url": url, "message": f"Không thể mở trình duyệt: {str(e)}"}
+
 @app.get("/api/models/clusters")
 def api_models_clusters():
     return get_all_model_clusters()
@@ -222,10 +261,17 @@ def api_select_folder(req: Optional[SelectFolderRequest] = None):
     except Exception as e:
         return {"success": False, "message": f"Lỗi mở hộp thoại: {str(e)}"}
 
+# Unload All Models from GPU VRAM immediately
+@app.post("/api/models/unload_all")
+def api_unload_all_models():
+    """Unload all active models from GPU VRAM immediately to free up memory."""
+    res = unload_all_ollama_models()
+    return res
+
 # Delete Model via Ollama API
 @app.post("/api/models/delete")
 def api_delete_model(req: DeleteModelRequest):
-    ollama_url = "http://localhost:11434/api/delete"
+    ollama_url = "http://127.0.0.1:11434/api/delete"
     try:
         r = requests.delete(ollama_url, json={"name": req.model_name}, timeout=15)
         if r.status_code == 200:
@@ -237,7 +283,7 @@ def api_delete_model(req: DeleteModelRequest):
 
 @app.post("/api/ollama/pull")
 def api_ollama_pull(req: PullRequest):
-    ollama_url = "http://localhost:11434/api/pull"
+    ollama_url = "http://127.0.0.1:11434/api/pull"
     def generate():
         try:
             with requests.post(ollama_url, json={"name": req.model_name}, stream=True, timeout=1800) as r:
@@ -254,7 +300,7 @@ def api_ollama_pull(req: PullRequest):
 
 @app.post("/api/models/benchmark")
 def api_benchmark(req: BenchmarkRequest):
-    ollama_url = "http://localhost:11434/api/generate"
+    ollama_url = "http://127.0.0.1:11434/api/generate"
     start_time = time.time()
     try:
         response = requests.post(
@@ -301,76 +347,103 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
         root_dir = req.directory
         start_time = time.time()
         
-        # Phase 1: Quick tree estimation (count top level items to estimate depth)
-        estimated_total_files = 0
-        try:
-            # For whole drive (C:\, D:\), sample reasonable baseline based on drive usage
-            if len(root_dir.rstrip("\\")) <= 2:
-                # Root drive scan: C:\ or D:\
-                import psutil
-                usage = psutil.disk_usage(root_dir)
-                # Average file size ~300KB
-                estimated_total_files = max(int((usage.used / 1024) / 350), 50000)
-            else:
-                # Count files in immediate 2 levels
-                for root, dirs, files in os.walk(root_dir):
-                    estimated_total_files += len(files)
-                    if estimated_total_files > 50000:
-                        break
-        except:
-            estimated_total_files = 30000
+        # Immediate start event so UI displays progress instantly
+        yield json.dumps({
+            "type": "progress",
+            "scanned_count": 0,
+            "current_file": "Bắt đầu quét cấu trúc...",
+            "current_folder": root_dir,
+            "junk_count": 0,
+            "hidden_count": 0,
+            "elapsed_seconds": 0.0,
+            "estimated_seconds_left": 3.0,
+            "percent": 2.0,
+            "speed": 0
+        }) + "\n"
+
+        is_root_drive = len(root_dir.rstrip("\\")) <= 2
+        base_depth = root_dir.rstrip("\\").count(os.sep)
+        MAX_DEPTH = 50
+        MAX_FILES = 1000000
+
+        EXCLUDED_DIRS = {
+            "$recycle.bin", "system volume information", "config.msi",
+            "recovery", "$winreagent", "documents and settings",
+            "winsxs", "servicing", "assembly",
+            "node_modules", ".git", "target", "build", "dist", ".cache",
+            "__pycache__", ".venv", "venv", "androidvirtual"
+        }
+
+        estimated_total_files = 10000 if is_root_drive else 5000
 
         scanned_count = 0
         total_bytes = 0
         junk_count = 0
         hidden_count = 0
         junk_paths = []
+        stopped_early = False
 
-        for dirpath, dirnames, filenames in os.walk(root_dir):
-            current_folder = dirpath
-            for fname in filenames:
-                scanned_count += 1
-                fpath = os.path.join(dirpath, fname)
-                try:
-                    fsize = os.path.getsize(fpath)
-                    total_bytes += fsize
-                except:
-                    pass
+        try:
+            for dirpath, dirnames, filenames in os.walk(root_dir, onerror=lambda e: None):
+                # Depth limiter
+                current_depth = dirpath.rstrip(os.sep).count(os.sep) - base_depth
+                if current_depth >= MAX_DEPTH:
+                    dirnames.clear()
+                else:
+                    # Filter out heavy and system directories
+                    dirnames[:] = [d for d in dirnames if d.lower() not in EXCLUDED_DIRS and not d.startswith(".")]
 
-                ext = os.path.splitext(fname)[1].lower().lstrip(".")
-                is_junk = ext in ["tmp", "log", "bak", "cache", "crdownload", "chk", "dmp"] or fname.lower() in ["thumbs.db", ".ds_store", "desktop.ini"] or fname.startswith("~$")
-                if is_junk:
-                    junk_count += 1
-                    junk_paths.append(fpath)
+                current_folder = dirpath
+                for fname in filenames:
+                    scanned_count += 1
+                    fpath = os.path.join(dirpath, fname)
+                    try:
+                        fsize = os.path.getsize(fpath)
+                        total_bytes += fsize
+                    except:
+                        pass
 
-                if fname.startswith("."):
-                    hidden_count += 1
+                    ext = os.path.splitext(fname)[1].lower().lstrip(".")
+                    is_junk = ext in ["tmp", "log", "bak", "cache", "crdownload", "chk", "dmp"] or fname.lower() in ["thumbs.db", ".ds_store", "desktop.ini"] or fname.startswith("~$")
+                    if is_junk:
+                        junk_count += 1
+                        junk_paths.append(fpath)
 
-                # Update progress every 80 items
-                if scanned_count % 80 == 0 or scanned_count <= 20:
-                    elapsed = max(time.time() - start_time, 0.1)
-                    speed_files_per_sec = scanned_count / elapsed
-                    
-                    # Dynamically adjust total estimate if exceeded
-                    if scanned_count >= estimated_total_files:
-                        estimated_total_files = int(scanned_count * 1.3)
+                    if fname.startswith("."):
+                        hidden_count += 1
 
-                    percent = min(round((scanned_count / max(estimated_total_files, 1)) * 100, 1), 99.0)
-                    remaining_files = max(estimated_total_files - scanned_count, 0)
-                    est_time_sec = round(remaining_files / max(speed_files_per_sec, 1), 1)
+                    # Update progress every 50 items
+                    if scanned_count % 50 == 0 or scanned_count <= 20:
+                        elapsed = max(time.time() - start_time, 0.1)
+                        speed_files_per_sec = scanned_count / elapsed
+                        
+                        if scanned_count >= estimated_total_files:
+                            estimated_total_files = int(scanned_count * 1.2)
 
-                    yield json.dumps({
-                        "type": "progress",
-                        "scanned_count": scanned_count,
-                        "current_file": fname,
-                        "current_folder": current_folder,
-                        "junk_count": junk_count,
-                        "hidden_count": hidden_count,
-                        "elapsed_seconds": round(elapsed, 1),
-                        "estimated_seconds_left": est_time_sec,
-                        "percent": percent,
-                        "speed": round(speed_files_per_sec)
-                    }) + "\n"
+                        percent = min(round((scanned_count / max(estimated_total_files, 1)) * 100, 1), 98.0)
+                        remaining_files = max(estimated_total_files - scanned_count, 0)
+                        est_time_sec = round(remaining_files / max(speed_files_per_sec, 1), 1)
+
+                        yield json.dumps({
+                            "type": "progress",
+                            "scanned_count": scanned_count,
+                            "current_file": fname,
+                            "current_folder": current_folder,
+                            "junk_count": junk_count,
+                            "hidden_count": hidden_count,
+                            "elapsed_seconds": round(elapsed, 1),
+                            "estimated_seconds_left": est_time_sec,
+                            "percent": percent,
+                            "speed": round(speed_files_per_sec)
+                        }) + "\n"
+
+                    if scanned_count >= MAX_FILES:
+                        stopped_early = True
+                        break
+                if stopped_early:
+                    break
+        except Exception as e:
+            pass
 
         elapsed_total = round(time.time() - start_time, 2)
         yield json.dumps({
@@ -380,7 +453,8 @@ def api_deep_scan_stream(req: DeepScanProgressRequest):
             "junk_count": junk_count,
             "hidden_count": hidden_count,
             "elapsed_seconds": elapsed_total,
-            "junk_paths": junk_paths
+            "junk_paths": junk_paths[:5000],
+            "stopped_early": stopped_early
         }) + "\n"
 
     return StreamingResponse(scan_generator(), media_type="application/x-ndjson")
@@ -406,7 +480,7 @@ def api_get_temp_status():
 
 @app.post("/api/system/clean_temp_stream")
 def api_clean_system_temp_stream(req: Optional[CleanTempRequest] = None):
-    from file_manager import get_system_temp_status, run_external_temp_cleaner, format_bytes
+    from file_manager import get_system_temp_status, format_bytes
     target_ids = set(req.zones) if req and req.zones else {"user_temp", "win_temp", "crash_dumps", "prefetch"}
     
     def clean_generator():
@@ -442,51 +516,51 @@ def api_clean_system_temp_stream(req: Optional[CleanTempRequest] = None):
             if not os.path.exists(p):
                 continue
             
-            try:
-                entries = os.listdir(p)
-            except Exception:
-                continue
-                
-            for item in entries:
-                full_item = os.path.join(p, item)
-                try:
-                    if os.path.isfile(full_item) or os.path.islink(full_item):
+            for dirpath, dirnames, filenames in os.walk(p, topdown=False):
+                for fname in filenames:
+                    full_item = os.path.join(dirpath, fname)
+                    try:
                         sz = os.path.getsize(full_item)
                         os.remove(full_item)
                         cleaned_count += 1
                         freed_bytes += sz
-                    elif os.path.isdir(full_item):
-                        shutil.rmtree(full_item, ignore_errors=True)
-                        cleaned_count += 1
-                except Exception:
-                    locked_count += 1
-                    
-                # Yield progress every few items (handle both cleaned and locked items)
-                processed_count = cleaned_count + locked_count
-                if processed_count % 5 == 0 or processed_count <= 10:
-                    elapsed = max(time.time() - start_time, 0.1)
-                    speed = max(processed_count / elapsed, 1)
-                    percent = min(round((processed_count / total_items) * 100, 1), 99.0)
-                    rem_items = max(total_items - processed_count, 0)
-                    est_left = round(rem_items / speed, 1)
-                    
-                    yield json.dumps({
-                        "type": "progress",
-                        "current_zone": z["name"],
-                        "current_file": item,
-                        "cleaned_count": cleaned_count,
-                        "total_items": total_items,
-                        "freed_mb": round(freed_bytes / (1024**2), 1),
-                        "locked_count": locked_count,
-                        "percent": percent,
-                        "elapsed": round(elapsed, 1),
-                        "est_left": est_left
-                    }) + "\n"
-        
-        # Trigger external tool if needed
-        external_res = run_external_temp_cleaner()
+                    except Exception:
+                        locked_count += 1
+
+                    processed_count = cleaned_count + locked_count
+                    if processed_count % 5 == 0 or processed_count <= 10:
+                        elapsed = max(time.time() - start_time, 0.1)
+                        speed = max(processed_count / elapsed, 1)
+                        percent = min(round((processed_count / total_items) * 100, 1), 99.0)
+                        rem_items = max(total_items - processed_count, 0)
+                        est_left = round(rem_items / speed, 1)
+
+                        yield json.dumps({
+                            "type": "progress",
+                            "current_zone": z["name"],
+                            "current_file": fname,
+                            "cleaned_count": cleaned_count,
+                            "total_items": total_items,
+                            "freed_mb": round(freed_bytes / (1024**2), 1),
+                            "locked_count": locked_count,
+                            "percent": percent,
+                            "elapsed": round(elapsed, 1),
+                            "est_left": est_left
+                        }) + "\n"
+
+                for dname in dirnames:
+                    dpath = os.path.join(dirpath, dname)
+                    try:
+                        os.rmdir(dpath)
+                    except Exception:
+                        pass
         elapsed_total = round(time.time() - start_time, 2)
-        
+        record_user_action("trash_files", {
+            "cleaned_count": cleaned_count,
+            "blocked_count": locked_count,
+            "freed_bytes": freed_bytes
+        })
+
         yield json.dumps({
             "type": "completed",
             "cleaned_count": cleaned_count,
@@ -631,35 +705,170 @@ def api_save_rules(rules: List[RuleItemModel]):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class OpenPathRequest(BaseModel):
+    path: str
+
+@app.post("/api/system/open_file")
+def api_open_file(req: OpenPathRequest):
+    p = os.path.normpath(req.path)
+    if not os.path.exists(p):
+        raise HTTPException(status_code=404, detail=f"Tệp không tồn tại: {p}")
+    try:
+        if sys.platform == "win32":
+            os.startfile(p)
+        else:
+            subprocess.Popen(["xdg-open", p])
+        return {"success": True, "message": f"Đã mở tệp: {p}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/system/open_explorer")
+def api_open_explorer(req: OpenPathRequest):
+    p = os.path.normpath(req.path)
+    if not os.path.exists(p):
+        raise HTTPException(status_code=404, detail=f"Đường dẫn không tồn tại: {p}")
+    try:
+        if sys.platform == "win32":
+            if os.path.isdir(p):
+                os.startfile(p)
+            else:
+                subprocess.Popen(f'explorer /select,"{p}"')
+        else:
+            folder = p if os.path.isdir(p) else os.path.dirname(p)
+            subprocess.Popen(["xdg-open", folder])
+        return {"success": True, "message": f"Đã mở vị trí tệp: {p}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 class ChatRequest(BaseModel):
     message: str
-    model: Optional[str] = "llama3.2:1b"
+    model: Optional[str] = None
+    history: Optional[List[Dict[str, str]]] = None
+
+def get_smart_fallback_reply(query: str) -> str:
+    q = query.lower()
+    if any(k in q for k in ["rac", "temp", "xoa", "don dep", "cache", "shader"]):
+        return (
+            "🧹 **Hướng dẫn Dọn rác & Bộ nhớ đệm Hệ thống:**\n\n"
+            "1. Vào thẻ **'Dọn rác hệ thống'** ở thanh menu bên trái.\n"
+            "2. MMO quét sâu các phân vùng: `%TEMP%`, `Windows Temp`, `DirectX & GPU Shader Cache` và `Crash Dumps`.\n"
+            "3. Bấm **'Dọn sạch ngay'**: Ứng dụng dọn đệ quy và tự động bỏ qua an toàn các tệp đang bị Windows hoặc phần mềm khác khóa."
+        )
+    elif any(k in q for k in ["sap xep", "to chuc", "phan loai", "organize", "dry-run", "undo"]):
+        return (
+            "📁 **Hướng dẫn Tổ chức & Sắp xếp Tệp tin:**\n\n"
+            "1. Chọn thư mục cần sắp xếp tại thẻ **'Quản lý tệp'**.\n"
+            "2. Bấm **'Quét phân tích'** để AI Intent Sniffer phân loại tài liệu (GameDev, Code, Văn phòng, Đồ họa).\n"
+            "3. Bấm **'Sắp xếp thư mục'** để mở bảng đối chiếu **Dry-Run Preview**.\n"
+            "4. Xác nhận Di chuyển/Sao chép. Mọi thao tác đều có Checksum SHA-256 và hỗ trợ nút **Hoàn tác (Undo)** 100% dữ liệu."
+        )
+    elif any(k in q for k in ["tim kiem", "search", "ngu nghia", "vector", "semantic"]):
+        return (
+            "🔍 **Tính năng Tìm kiếm Ngữ nghĩa (Neural Semantic Search):**\n\n"
+            "MMO kết hợp mô hình Vector Embeddings (`nomic-embed-text` / `bge-m3`) và trích xuất nội dung nhanh (Content Sniffer). "
+            "Bạn có thể nhập câu hỏi tự nhiên hoặc mô tả nội dung văn bản (ví dụ: *'kế hoạch nghiên cứu 2026'*, *'mã nguồn FastAPI'*) để tìm chính xác tài liệu mà không cần nhớ tên tệp!"
+        )
+    elif any(k in q for k in ["phan tang", "hot", "warm", "cold", "tiering", "toi uu"]):
+        return (
+            "⚡ **Cơ chế Phân tầng Lưu trữ (Storage Tiering):**\n\n"
+            "MMO tự động phân tích tần suất truy cập:\n"
+            "- **Hot Tier (<= 7 ngày):** Tệp đang dùng thường xuyên, giữ trên SSD tốc độ cao.\n"
+            "- **Warm Tier (8 - 45 ngày):** Tệp xem ngắt quãng.\n"
+            "- **Cold Tier (> 45 ngày):** Tệp lưu trữ dài hạn, có thể chuyển sang Cold Vault để giải phóng bộ nhớ."
+        )
+    elif any(k in q for k in ["phan cung", "gpu", "vram", "ram", "card", "laptop"]):
+        try:
+            hw = get_hardware_info()
+            ram_info = f"{hw['ram']['used_gb']} / {hw['ram']['total_gb']} GB ({hw['ram']['percent']}%)"
+            gpu_name = hw['gpu']['name'] if hw['gpu']['has_gpu'] else "Đồ họa tích hợp"
+            vram_info = f"{hw['gpu']['used_vram_gb']} / {hw['gpu']['total_vram_gb']} GB" if hw['gpu']['has_gpu'] else "Chia sẻ RAM"
+            return (
+                f"💻 **Thông số Phần cứng Máy tính của bạn:**\n\n"
+                f"- **RAM:** {ram_info}\n"
+                f"- **Card đồ họa:** {gpu_name} (VRAM: {vram_info})\n"
+                f"- **CPU:** {hw['cpu']['logical_cores']} luồng xử lý\n\n"
+                f"💡 *Khuyến nghị:* Cấu hình máy tính này chạy rất mượt các mô hình SLM cục bộ như `llama3.2:1b`, `qwen2.5:1.5b` và `nomic-embed-text`."
+            )
+        except Exception:
+            return "💻 Ứng dụng hỗ trợ tối ưu đa luồng CPU và tăng tốc GPU VRAM thông qua Ollama Engine cục bộ."
+    else:
+        return (
+            f"👋 Chào bạn! Tôi là Trợ lý AI Thông Minh của MMO Desktop.\n\n"
+            f"Tôi có thể hỗ trợ bạn:\n"
+            f"- 📁 **Tổ chức & Phân loại dữ liệu** tự động theo ngữ cảnh dự án.\n"
+            f"- 🧹 **Dọn sạch rác hệ thống & Shader Cache** an toàn.\n"
+            f"- 🔍 **Tìm kiếm tệp thông minh** bằng nội dung và Vector Embeddings.\n"
+            f"- 📊 **Tối ưu lưu trữ Hot/Warm/Cold** giải phóng dung lượng SSD.\n\n"
+            f"*(Bạn vừa hỏi: '{query}')*"
+        )
 
 @app.post("/api/ai/chat")
 def api_ai_chat(req: ChatRequest):
-    model = req.model if req.model else "llama3.2:1b"
+    ollama_status = check_ollama_status()
+    installed_list = ollama_status.get("installed_models", [])
+    chat_candidates = ollama_status.get("chat_models", [])
+
+    # Resolve target model
+    model = req.model
+    # If model is not set, or is default, or is an embedding model, pick best chat candidate
+    is_embed_model = model and any(k in model.lower() for k in ["embed", "bge", "bert", "clip"])
+    if not model or model == "default" or is_embed_model or model not in installed_list:
+        if chat_candidates:
+            model = chat_candidates[0]
+        elif installed_list:
+            model = installed_list[0]
+        else:
+            model = "llama3.2:1b"
+
     system_prompt = (
         "Bạn là Trợ lý AI Thông Minh tích hợp của ứng dụng MMO Desktop (Multimodal Organizer). "
         "Nhiệm vụ của bạn là hỗ trợ người dùng phân loại tệp tin, dọn dẹp hệ thống, tìm kiếm tệp ngữ nghĩa, "
         "tối ưu phân tầng Hot/Warm/Cold, giải đáp thắc mắc về phần cứng, dung lượng đĩa và cách dùng phần mềm. "
         "Hãy trả lời bằng tiếng Việt thân thiện, súc tích, chuyên nghiệp."
     )
-    full_prompt = f"{system_prompt}\n\nNgười dùng: {req.message}\nTrợ lý MMO:"
-    try:
-        r = requests.post(
-            "http://127.0.0.1:11434/api/generate",
-            json={"model": model, "prompt": full_prompt, "stream": False},
-            timeout=30
-        )
-        if r.status_code == 200:
-            return {"success": True, "reply": r.json().get("response", "").strip()}
-    except Exception as e:
-        pass
-    
-    # Fallback if Ollama not responding or timeout
+
+    # 1. Try Ollama Native /api/chat if service is running
+    if ollama_status.get("is_running") and (model in installed_list or chat_candidates):
+        messages = [{"role": "system", "content": system_prompt}]
+        if req.history:
+            for h in req.history[-6:]:
+                messages.append({"role": h.get("role", "user"), "content": h.get("content", "")})
+        messages.append({"role": "user", "content": req.message})
+
+        try:
+            r = requests.post(
+                "http://127.0.0.1:11434/api/chat",
+                json={"model": model, "messages": messages, "stream": False},
+                timeout=40
+            )
+            if r.status_code == 200:
+                reply = r.json().get("message", {}).get("content", "").strip()
+                if reply:
+                    return {"success": True, "reply": reply, "model": model}
+        except Exception:
+            pass
+
+        # 2. Secondary fallback: Ollama /api/generate
+        try:
+            full_prompt = f"{system_prompt}\n\nNgười dùng: {req.message}\nTrợ lý MMO:"
+            r = requests.post(
+                "http://127.0.0.1:11434/api/generate",
+                json={"model": model, "prompt": full_prompt, "stream": False},
+                timeout=40
+            )
+            if r.status_code == 200:
+                reply = r.json().get("response", "").strip()
+                if reply:
+                    return {"success": True, "reply": reply, "model": model}
+        except Exception:
+            pass
+
+    # 3. Intelligent rule-based assistant fallback if Ollama model is busy/loading or service stopped
+    fallback_text = get_smart_fallback_reply(req.message)
     return {
         "success": True,
-        "reply": f"Tôi là Trợ lý MMO! Tôi có thể giúp bạn sắp xếp dữ liệu tự động, dọn dẹp bộ nhớ đệm hoặc giải thích cách phân loại tệp tin. (Bạn đã hỏi: '{req.message}')"
+        "reply": fallback_text,
+        "model": f"{model} (Trợ lý MMO)"
     }
 
 class OverviewStatsRequest(BaseModel):
@@ -826,29 +1035,65 @@ class SemanticSearchRequest(BaseModel):
     search_dir: Optional[str] = "D:\\AI_NCKH"
     top_k: Optional[int] = 10
 
-def sniff_file_content(file_path: str, max_chars: int = 1000) -> str:
+import unicodedata
+
+def normalize_text(text: str) -> str:
+    """Normalize text: strip Vietnamese accents, lower-case, remove extra punctuation"""
+    if not text:
+        return ""
+    text = text.lower()
+    text = unicodedata.normalize('NFD', text)
+    text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
+    text = text.replace('đ', 'd').replace('Đ', 'd')
+    return text
+
+def sniff_file_content(file_path: str, max_chars: int = 1200) -> str:
     """
     Blazing-fast content sniffer: reads first snippet of readable files
-    to extract actual contextual content for true semantic embeddings.
+    to extract actual contextual content for true semantic embeddings and search.
     """
     ext = os.path.splitext(file_path)[1].lower().lstrip(".")
     text_exts = {
         "txt", "md", "json", "py", "rs", "ts", "tsx", "js", "jsx", "html", "css",
-        "csv", "yaml", "yml", "toml", "bat", "sh", "ps1", "sql", "log", "ini", "cfg"
+        "csv", "yaml", "yml", "toml", "bat", "sh", "ps1", "sql", "log", "ini", "cfg",
+        "xml", "env", "gitignore", "conf"
     }
     if ext not in text_exts:
         return ""
     try:
-        # Check size to prevent opening massive binaries
         if os.path.getsize(file_path) > 10 * 1024 * 1024:
             return ""
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read(max_chars).strip()
-            # Clean whitespace
-            content = " ".join(content.split())
-            return content
+            return " ".join(content.split())
     except Exception:
         return ""
+
+def get_embeddings_batch(texts: List[str], model: str = "nomic-embed-text") -> List[Optional[List[float]]]:
+    """
+    Get embeddings in small fast chunks using Ollama /api/embed.
+    """
+    if not texts:
+        return []
+    cleaned_texts = [t[:400] if t else "tệp tin" for t in texts]
+    all_embeddings = []
+    chunk_size = 6
+    for i in range(0, len(cleaned_texts), chunk_size):
+        chunk = cleaned_texts[i:i + chunk_size]
+        try:
+            r = requests.post(
+                "http://127.0.0.1:11434/api/embed",
+                json={"model": model, "input": chunk},
+                timeout=5
+            )
+            if r.status_code == 200:
+                embs = r.json().get("embeddings", [])
+                all_embeddings.extend(embs)
+            else:
+                return []
+        except Exception:
+            return []
+    return all_embeddings
 
 @app.post("/api/search/semantic")
 def api_semantic_search(req: SemanticSearchRequest):
@@ -858,11 +1103,10 @@ def api_semantic_search(req: SemanticSearchRequest):
 
     search_path = req.search_dir.strip() if req.search_dir and os.path.exists(req.search_dir.strip()) else "D:\\AI_NCKH"
     
-    # 1. Collect candidate files from search directory (up to 300 files)
+    # 1. Collect candidate files (up to 800 files)
     candidate_files = []
     try:
         for root, dirs, files in os.walk(search_path):
-            # Skip hidden and cache folders
             dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ["node_modules", ".git", "__pycache__", "dist", "target", "build"]]
             for f in files:
                 if f.startswith(".") or f.startswith("~$"):
@@ -874,123 +1118,160 @@ def api_semantic_search(req: SemanticSearchRequest):
                     "path": full_path,
                     "ext": ext
                 })
-                if len(candidate_files) >= 400:
+                if len(candidate_files) >= 800:
                     break
-            if len(candidate_files) >= 400:
+            if len(candidate_files) >= 800:
                 break
     except Exception:
         pass
 
-    # 2. Try Vector Embedding via Ollama nomic-embed-text or bge-m3
-    results = []
-    vector_search_worked = False
+    if not candidate_files:
+        return {
+            "success": True,
+            "query": query,
+            "search_dir": search_path,
+            "model_used": "No files found",
+            "vector_enabled": False,
+            "total_scanned": 0,
+            "results": []
+        }
 
-    def get_embedding(text: str, model: str = "nomic-embed-text"):
-        try:
-            r = requests.post("http://127.0.0.1:11434/api/embeddings", json={"model": model, "prompt": text[:1500]}, timeout=3)
-            if r.status_code == 200:
-                return r.json().get("embedding")
-        except:
-            pass
-        return None
-
-    # Check available embedding model
-    embed_model = "nomic-embed-text"
-    query_vec = get_embedding(query, embed_model)
-    if not query_vec:
-        query_vec = get_embedding(query, "bge-m3")
-        if query_vec:
-            embed_model = "bge-m3"
-
-    # Normalize query words for lexical match
-    q_words = [w.lower() for w in query.split() if len(w) > 1]
-
-    def cosine_sim(a, b):
-        dot = sum(x * y for x, y in zip(a, b))
-        norm_a = sum(x * x for x in a) ** 0.5
-        norm_b = sum(x * x for x in b) ** 0.5
-        return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
-
-    # Read preview/content snippet for candidate files
     from file_manager import detect_modality
     from ai_organizer import analyze_file_intent
 
-    # Pre-rank candidates by fast lexical and extension matching first
-    # So we don't calculate expensive neural embeddings for hundreds of irrelevant files
-    pre_scored = []
-    for item in candidate_files:
-        name_lower = item["name"].lower()
-        match_count = sum(1 for w in q_words if w in name_lower)
-        pre_scored.append((match_count, item))
-    pre_scored.sort(key=lambda x: x[0], reverse=True)
-    # Take top 35 candidates for neural embedding & deep content sniffing
-    eval_candidates = [item for _, item in pre_scored[:35]]
+    # Normalize query terms (both original and unaccented)
+    query_lower = query.lower()
+    query_norm = normalize_text(query)
+    q_words_raw = [w for w in query_lower.split() if len(w) > 1]
+    q_words_norm = [w for w in query_norm.split() if len(w) > 1]
 
-    scored_items = []
-    for item in eval_candidates:
+    # Pre-score candidates with fast lexical & content sniffing
+    scored_candidates = []
+    for item in candidate_files:
         name = item["name"]
         path = item["path"]
         ext = item["ext"]
         name_lower = name.lower()
+        name_norm = normalize_text(name)
 
-        # Read actual content snippet (up to 800 chars)
-        file_content_snippet = sniff_file_content(path, max_chars=800)
-        content_lower = file_content_snippet.lower()
+        # Lexical score on file name
+        raw_matches = sum(1 for w in q_words_raw if w in name_lower)
+        norm_matches = sum(1 for w in q_words_norm if w in name_norm)
+        exact_sub = 1.0 if (query_lower in name_lower or query_norm in name_norm) else 0.0
 
-        # Lexical matching score: name match has high weight, content match adds weight
-        name_matches = sum(1 for w in q_words if w in name_lower)
-        content_matches = sum(1 for w in q_words if w in content_lower) if file_content_snippet else 0
+        file_lex_score = 0.0
+        if q_words_norm:
+            file_lex_score = (norm_matches / len(q_words_norm)) * 0.7 + exact_sub * 0.3
 
-        lexical_score = 0.0
-        if q_words:
-            lexical_score = min(1.0, (name_matches * 0.7 + (1.0 if content_matches > 0 else 0.0) * 0.3) / max(len(q_words), 1))
-
-        # Vector score
-        vector_score = 0.0
+        # Intent & modality boost
         intent = analyze_file_intent(name, ext)
+        intent_tag = intent.get("context_tag", "").lower()
+        intent_folder = intent.get("main_folder", "").lower()
+        if any(w in intent_tag or w in intent_folder for w in q_words_norm):
+            file_lex_score += 0.25
 
-        if query_vec:
-            # Enrich embedding context with actual content snippet!
-            combined_context = f"{name} {intent.get('context_tag', '')} {intent.get('main_folder', '')}"
-            if file_content_snippet:
-                combined_context += f" | Nội dung: {file_content_snippet[:350]}"
+        scored_candidates.append({
+            "item": item,
+            "name": name,
+            "path": path,
+            "ext": ext,
+            "intent": intent,
+            "lexical_score": min(file_lex_score, 1.0)
+        })
 
-            file_vec = get_embedding(combined_context, embed_model)
-            if file_vec:
-                vector_search_worked = True
-                raw_v = cosine_sim(query_vec, file_vec)
-                # Re-scale true relevance: >0.55 is strong, <0.4 is weak/irrelevant
-                vector_score = max(0.0, (raw_v - 0.45) / 0.55)
+    # Sort descending by preliminary lexical score
+    scored_candidates.sort(key=lambda x: x["lexical_score"], reverse=True)
+    # Evaluate top 20 candidates deeply with snippet & embeddings
+    eval_candidates = scored_candidates[:20]
 
-        # Combined final score
+    # Read content snippets for evaluated candidates
+    for c in eval_candidates:
+        snippet = sniff_file_content(c["path"], max_chars=800)
+        c["snippet"] = snippet
+        if snippet:
+            snip_norm = normalize_text(snippet)
+            content_matches = sum(1 for w in q_words_norm if w in snip_norm)
+            if content_matches > 0:
+                c["lexical_score"] = min(1.0, c["lexical_score"] + (content_matches / max(len(q_words_norm), 1)) * 0.4)
+
+    # 2. Check for Ollama Vector Embedding availability
+    ollama_status = check_ollama_status()
+    embed_model = None
+    if ollama_status.get("is_running"):
+        installed = ollama_status.get("installed_models", [])
+        if any("nomic-embed-text" in m for m in installed):
+            embed_model = "nomic-embed-text"
+        elif any("bge-m3" in m for m in installed):
+            embed_model = "bge-m3"
+
+    vector_search_worked = False
+    if embed_model:
+        def cosine_sim(a, b):
+            if not a or not b or len(a) != len(b):
+                return 0.0
+            dot = sum(x * y for x, y in zip(a, b))
+            norm_a = sum(x * x for x in a) ** 0.5
+            norm_b = sum(x * x for x in b) ** 0.5
+            return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
+
+        # Build context texts for batch embedding
+        batch_inputs = [query]
+        for c in eval_candidates:
+            ctx = f"{c['name']} {c['intent'].get('context_tag', '')} {c['intent'].get('main_folder', '')}"
+            if c["snippet"]:
+                ctx += f" | {c['snippet'][:250]}"
+            batch_inputs.append(ctx)
+
+        embeddings = get_embeddings_batch(batch_inputs, embed_model)
+        if len(embeddings) == len(batch_inputs) and embeddings[0]:
+            query_vec = embeddings[0]
+            candidate_vecs = embeddings[1:]
+            vector_search_worked = True
+
+            for idx, c in enumerate(eval_candidates):
+                c_vec = candidate_vecs[idx]
+                if c_vec:
+                    sim = cosine_sim(query_vec, c_vec)
+                    # Rescale relevance: typical nomic cosine similarity ~0.4-0.85
+                    norm_sim = max(0.0, min(1.0, (sim - 0.35) / 0.5))
+                    c["vector_score"] = norm_sim
+                else:
+                    c["vector_score"] = 0.0
+
+    # 3. Calculate final hybrid score
+    final_results = []
+    for c in eval_candidates:
+        lex = c["lexical_score"]
+        vec = c.get("vector_score", 0.0)
+
         if vector_search_worked:
-            final_score = (vector_score * 0.6) + (lexical_score * 0.4)
+            final_score = (vec * 0.65) + (lex * 0.35)
         else:
-            final_score = lexical_score
+            final_score = lex
 
-        # Prepare meaningful snippet
-        if file_content_snippet:
-            snippet_text = file_content_snippet[:140] + ("..." if len(file_content_snippet) > 140 else "")
+        # Format descriptive snippet
+        if c["snippet"]:
+            snippet_text = c["snippet"][:150] + ("..." if len(c["snippet"]) > 150 else "")
         else:
-            snippet_text = f"Tệp {detect_modality(ext)} thuộc nhóm {intent.get('main_folder', 'Tài liệu')}. Nhãn: {intent.get('context_tag', 'Chung')}."
+            snippet_text = f"Tệp {detect_modality(c['ext'])} thuộc nhóm {c['intent'].get('main_folder', 'Tài liệu')}. Nhãn: {c['intent'].get('context_tag', 'Chung')}."
 
-        tier = "Hot" if final_score >= 0.65 else ("Warm" if final_score >= 0.35 else "Cold")
+        tier = "Hot" if final_score >= 0.6 else ("Warm" if final_score >= 0.3 else "Cold")
 
-        # FILTER: Only include if score is genuinely non-zero
-        if final_score > 0.08 or lexical_score > 0:
-            scored_items.append({
-                "title": name,
-                "path": path,
-                "modality": detect_modality(ext),
+        # Include if has positive score or query term present
+        if final_score > 0.08 or lex > 0.15:
+            final_results.append({
+                "title": c["name"],
+                "path": c["path"],
+                "modality": detect_modality(c["ext"]),
                 "score": round(final_score, 2),
                 "snippet": snippet_text,
-                "cluster": intent.get("main_folder", "General"),
+                "cluster": c["intent"].get("main_folder", "General"),
                 "tier": tier
             })
 
-    # Sort descending by score
-    scored_items.sort(key=lambda x: x["score"], reverse=True)
-    results = scored_items[:req.top_k]
+    # Sort descending by final score
+    final_results.sort(key=lambda x: x["score"], reverse=True)
+    results = final_results[:req.top_k]
 
     return {
         "success": True,

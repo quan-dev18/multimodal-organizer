@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { VramGauge } from './components/preflight/VramGauge';
+import { OllamaBanner } from './components/preflight/OllamaBanner';
 import { MultiModelSelector } from './components/preflight/MultiModelSelector';
 import type { ModelItem, ModelCluster, BatchDownloadStatus } from './components/preflight/MultiModelSelector';
 import { BenchmarkCard } from './components/preflight/BenchmarkCard';
+import { ModelComparisonModal } from './components/preflight/ModelComparisonModal';
 import { MainApp } from './components/main/MainApp';
-import { ArrowRight, RefreshCw, CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+import { ArrowRight, RefreshCw, CheckCircle2, AlertCircle, Info, X, Zap } from 'lucide-react';
 import { ThemeAndLangControls } from './lib/ThemeAndLangControls';
 import { useApp } from './lib/AppContext';
 import { sfx } from './lib/sounds';
@@ -20,6 +22,7 @@ interface ToastNotification {
 export function App() {
   const { t } = useApp();
   const [isInPreflight, setIsInPreflight] = useState<boolean>(true);
+  const [isComparisonOpen, setIsComparisonOpen] = useState<boolean>(false);
   const [hardware, setHardware] = useState<any>(null);
   const [ollamaStatus, setOllamaStatus] = useState<any>(null);
   const [clusters, setClusters] = useState<ModelCluster[]>([]);
@@ -27,10 +30,17 @@ export function App() {
   const [storagePath, setStoragePath] = useState<string>("D:\\OllamaModels");
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
   
-  // Selected models
-  const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(
-    new Set(["qwen2.5:1.5b", "bge-m3"])
-  );
+  // Selected models (persist user selection so it is never forcibly overwritten)
+  const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('mmo_selected_models');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return new Set(parsed);
+      }
+    } catch {}
+    return new Set(["llama3.2:1b"]);
+  });
 
   // Batch download state
   const [batchStatus, setBatchStatus] = useState<BatchDownloadStatus>({
@@ -65,34 +75,35 @@ export function App() {
   const refreshSystemInfo = async () => {
     setLoadingHardware(true);
     try {
-      const [hwRes, ollamaRes, clusRes, catRes, pathRes] = await Promise.all([
+      const [hwRes, ollamaRes, clusRes, catRes, pathRes, cfgRes] = await Promise.all([
         fetch(`${API_BASE}/hardware`).then(r => r.json()).catch(() => null),
         fetch(`${API_BASE}/ollama/status`).then(r => r.json()).catch(() => null),
         fetch(`${API_BASE}/models/clusters`).then(r => r.json()).catch(() => null),
         fetch(`${API_BASE}/models/catalog`).then(r => r.json()).catch(() => null),
-        fetch(`${API_BASE}/models/storage_location`).then(r => r.json()).catch(() => null)
+        fetch(`${API_BASE}/models/storage_location`).then(r => r.json()).catch(() => null),
+        fetch(`${API_BASE}/config`).then(r => r.json()).catch(() => null)
       ]);
 
       if (hwRes) setHardware(hwRes);
       if (ollamaRes) {
         setOllamaStatus(ollamaRes);
-        // Sync active selection with actually installed models if available
-        if (ollamaRes.models && ollamaRes.models.length > 0) {
-          const installedTags: string[] = ollamaRes.models.map((m: any) => m.name);
-          setSelectedModelIds(prev => {
-            const matched = new Set<string>();
-            catRes?.forEach((c: ModelItem) => {
-              if (installedTags.some(t => t.includes(c.tag) || c.tag.includes(t))) {
-                matched.add(c.id);
-              }
-            });
-            return matched.size > 0 ? matched : prev;
-          });
-        }
+        const installed: string[] = ollamaRes.installed_models || ollamaRes.models?.map((m: any) => m.name) || [];
+        // Auto-select installed models if current selection has none installed
+        setSelectedModelIds(prev => {
+          const hasAnyInstalled = Array.from(prev).some(id =>
+            installed.some(tag => tag.includes(id) || id.includes(tag))
+          );
+          if (!hasAnyInstalled && installed.length > 0) {
+            const chatModel = installed.find(t => !t.includes("embed") && !t.includes("bge")) || installed[0];
+            return new Set([chatModel]);
+          }
+          return prev;
+        });
       }
       if (clusRes && clusRes.length > 0) setClusters(clusRes);
       if (catRes && catRes.length > 0) setFlatCatalog(catRes);
       if (pathRes && pathRes.current_path) setStoragePath(pathRes.current_path);
+      if (cfgRes && cfgRes.model_storage_path) setStoragePath(cfgRes.model_storage_path);
     } catch (e) {
       console.error("Lỗi kết nối", e);
     } finally {
@@ -106,15 +117,64 @@ export function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Automatically unload all models and release VRAM when app window or tab is closed
+  useEffect(() => {
+    const handleUnload = () => {
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(`${API_BASE}/models/unload_all`);
+        } else {
+          fetch(`${API_BASE}/models/unload_all`, { method: 'POST', keepalive: true }).catch(() => {});
+        }
+      } catch {}
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+    };
+  }, []);
+
+  const handleFreeVram = async () => {
+    sfx.click();
+    try {
+      const res = await fetch(`${API_BASE}/models/unload_all`, { method: 'POST' });
+      const data = await res.json();
+      showToast(
+        data.unloaded && data.unloaded.length > 0
+          ? `Đã giải phóng VRAM thành công! Đã đóng: ${data.unloaded.join(', ')}`
+          : "VRAM hiện tại đã hoàn toàn sạch sẽ, không có mô hình nào chạy ngầm.",
+        'success'
+      );
+      await refreshSystemInfo();
+    } catch (e: any) {
+      showToast(`Lỗi giải phóng VRAM: ${e.message}`, 'error');
+    }
+  };
+
   const handleToggleModel = (m: ModelItem) => {
     sfx.toggle();
     const next = new Set(selectedModelIds);
     if (next.has(m.id)) {
-      if (next.size > 1) next.delete(m.id);
+      if (next.size > 1) {
+        next.delete(m.id);
+      } else {
+        showToast("Phải chọn ít nhất 1 mô hình hoạt động!", "info");
+      }
     } else {
       next.add(m.id);
     }
     setSelectedModelIds(next);
+    try {
+      localStorage.setItem('mmo_selected_models', JSON.stringify(Array.from(next)));
+    } catch {}
+    // Sync active_models to config.json
+    fetch(`${API_BASE}/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active_models: Array.from(next) })
+    }).catch(() => {});
   };
 
   // Open native Windows folder selector dialog
@@ -196,6 +256,16 @@ export function App() {
   // Batch Download all uninstalled models sequentially
   const handleDownloadAllSelected = async () => {
     sfx.click();
+    if (!ollamaStatus?.is_running) {
+      sfx.error();
+      showToast(
+        ollamaStatus?.is_installed
+          ? "Dịch vụ Ollama chưa chạy! Hãy bấm 'Tự động bật Ollama ngay' ở thanh cảnh báo phía trên."
+          : "Chưa cài đặt Ollama! Vui lòng tải và cài đặt Ollama từ ollama.com trước khi tải mô hình.",
+        "error"
+      );
+      return;
+    }
     const installedList: string[] = ollamaStatus?.models?.map((m: any) => m.name) || [];
     const modelsToDownload = flatCatalog.filter(
       m => selectedModelIds.has(m.id) && !installedList.some(tag => tag.includes(m.tag) || m.tag.includes(tag))
@@ -262,6 +332,16 @@ export function App() {
   // Download single model
   const handleDownloadSingleModel = async (modelTag: string) => {
     sfx.click();
+    if (!ollamaStatus?.is_running) {
+      sfx.error();
+      showToast(
+        ollamaStatus?.is_installed
+          ? "Dịch vụ Ollama chưa chạy! Hãy bấm 'Tự động bật Ollama ngay' ở thanh cảnh báo phía trên."
+          : "Chưa cài đặt Ollama! Vui lòng tải và cài đặt Ollama từ ollama.com trước khi tải mô hình.",
+        "error"
+      );
+      return;
+    }
     setBatchStatus({
       isDownloading: true,
       currentModelTag: modelTag,
@@ -322,9 +402,16 @@ export function App() {
     return res.json();
   };
 
-  const totalVram = hardware?.gpu?.total_vram_gb || 4.0;
-  const usedVramOther = hardware?.gpu?.used_vram_gb ? Math.max(hardware.gpu.used_vram_gb - 1.6, 0.8) : 0.8;
-  const gpuName = hardware?.gpu?.name || "NVIDIA GeForce GTX 1650";
+  const hasDedicatedGpu = !!hardware?.gpu?.has_gpu;
+  const totalVram = hasDedicatedGpu 
+    ? (hardware?.gpu?.total_vram_gb || 4.0) 
+    : (hardware?.ram?.total_gb ? Math.round(hardware.ram.total_gb * 0.4 * 10) / 10 : 4.0);
+  const usedVramOther = hasDedicatedGpu 
+    ? (hardware?.gpu?.used_vram_gb || 0.8) 
+    : (hardware?.ram?.used_gb ? Math.round(hardware.ram.used_gb * 0.2 * 10) / 10 : 0.8);
+  const gpuName = hasDedicatedGpu 
+    ? (hardware?.gpu?.name || "Card đồ họa chuyên dụng (GPU)") 
+    : "Đồ họa tích hợp (Chia sẻ bộ nhớ RAM)";
 
   const selectedModelsList = flatCatalog.filter(m => selectedModelIds.has(m.id));
   const totalModelVram = selectedModelsList.reduce((acc, m) => acc + (m.est_vram_gb || 1.0), 0);
@@ -341,6 +428,9 @@ export function App() {
           setIsInPreflight(true);
         }}
         activeModelNames={selectedModelsList.map(m => m.name)}
+        activeModelTags={selectedModelsList.map(m => m.tag)}
+        primaryModelTag={primaryModel.tag}
+        hardware={hardware}
       />
     );
   }
@@ -413,7 +503,39 @@ export function App() {
           </button>
 
           <button
+            onClick={handleFreeVram}
+            className="px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 rounded-lg text-xs flex items-center gap-1.5 border border-rose-800/60 transition-colors cursor-pointer"
+            title="Đóng các mô hình đang chiếm dụng bộ nhớ để giải phóng 100% VRAM GPU"
+          >
+            <Zap className="w-3.5 h-3.5 text-rose-400" />
+            Giải phóng VRAM
+          </button>
+
+          <button
             onClick={() => {
+              sfx.click();
+              setIsComparisonOpen(true);
+            }}
+            className="px-3 py-1.5 bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 rounded-lg text-xs flex items-center gap-1.5 border border-indigo-800/80 transition-colors cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            So sánh đa mô hình
+          </button>
+
+          <button
+            onClick={() => {
+              // 0. Validation check: Ollama must be running
+              if (!ollamaStatus?.is_running) {
+                sfx.error();
+                showToast(
+                  ollamaStatus?.is_installed
+                    ? "Không thể bắt đầu: Dịch vụ Ollama chưa chạy! Hãy bấm 'Tự động bật Ollama ngay' ở phía trên."
+                    : "Không thể bắt đầu: Chưa cài đặt Ollama! Vui lòng cài đặt từ ollama.com trước.",
+                  "error"
+                );
+                return;
+              }
+
               // 1. Validation check: Must select at least 1 model
               if (selectedModelsList.length === 0) {
                 sfx.error();
@@ -452,6 +574,14 @@ export function App() {
 
       {/* Main Content Area */}
       <main className="space-y-6 my-6">
+        {/* Ollama Status & Health Alert Banner */}
+        <OllamaBanner
+          status={ollamaStatus}
+          loading={loadingHardware}
+          onRefresh={refreshSystemInfo}
+          apiBase={API_BASE}
+        />
+
         {/* 1. STICKY VRAM GAUGE BAR */}
         <div className="sticky top-4 z-40 shadow-xl">
           <VramGauge
@@ -460,6 +590,7 @@ export function App() {
             modelVramGb={totalModelVram}
             appName={`Cụm ${selectedModelIds.size} mô hình đã chọn`}
             gpuName={gpuName}
+            onFreeVram={handleFreeVram}
           />
         </div>
 
@@ -493,13 +624,24 @@ export function App() {
       <footer className="pt-4 border-t border-zinc-900 flex items-center justify-between text-xs text-zinc-400 font-sans">
         <div className="flex items-center gap-4">
           <span>GPU: <span className="text-zinc-300 font-medium">{gpuName}</span> ({totalVram} GB)</span>
-          <span>RAM: <span className="text-zinc-300 font-medium">{hardware?.ram?.total_gb || 16} GB</span> (Trống: {hardware?.ram?.free_gb || 6} GB)</span>
-          <span>CPU: <span className="text-zinc-300 font-medium">{hardware?.cpu?.logical_cores || 8} luồng</span></span>
+          <span>RAM: <span className="text-zinc-300 font-medium">{hardware?.ram?.total_gb ? `${hardware.ram.total_gb} GB` : 'Đang đọc...'}</span> (Trống: {hardware?.ram?.free_gb ? `${hardware.ram.free_gb} GB` : '--'})</span>
+          <span>CPU: <span className="text-zinc-300 font-medium">{hardware?.cpu?.logical_cores || hardware?.cpu?.cores || '--'} luồng</span>{hardware?.cpu?.percent != null ? ` (${hardware.cpu.percent}%)` : ''}</span>
         </div>
         <div className="text-zinc-400 text-xs">
           MMO Desktop · Trải nghiệm mượt mà, tối ưu phần cứng cục bộ
         </div>
       </footer>
+
+      {/* Multi-Model Comparison Modal */}
+      <ModelComparisonModal
+        isOpen={isComparisonOpen}
+        onClose={() => setIsComparisonOpen(false)}
+        models={flatCatalog}
+        selectedModelIds={selectedModelIds}
+        installedModels={installedModelsList}
+        onToggleModel={handleToggleModel}
+        onDownloadSingleModel={handleDownloadSingleModel}
+      />
     </div>
   );
 }

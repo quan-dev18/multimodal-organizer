@@ -8,7 +8,8 @@ import {
   Zap,
   Settings,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  BarChart2
 } from 'lucide-react';
 import { FileExplorerTree } from './FileExplorerTree';
 import { DedicatedTempCleaner } from './DedicatedTempCleaner';
@@ -16,6 +17,7 @@ import { RuleConfigView } from './RuleConfigView';
 import { TieringOptimizerView } from './TieringOptimizerView';
 import { SemanticSearchView } from './SemanticSearchView';
 import { DashboardOverviewView } from './DashboardOverviewView';
+import { BenchmarkDashboardView } from './BenchmarkDashboardView';
 import { sfx } from '../../lib/sounds';
 import { useApp } from '../../lib/AppContext';
 import { ThemeAndLangControls } from '../../lib/ThemeAndLangControls';
@@ -23,22 +25,26 @@ import { ThemeAndLangControls } from '../../lib/ThemeAndLangControls';
 interface MainAppProps {
   onBackToPreflight: () => void;
   activeModelNames: string[];
+  activeModelTags?: string[];
+  primaryModelTag?: string;
+  hardware?: any;
 }
 
-type TabId = 'files' | 'temp_cleaner' | 'dashboard' | 'organize' | 'storage' | 'search';
+type TabId = 'files' | 'temp_cleaner' | 'dashboard' | 'benchmark' | 'organize' | 'storage' | 'search';
 
-export const MainApp: React.FC<MainAppProps> = ({ onBackToPreflight, activeModelNames }) => {
-  const { t } = useApp();
+export const MainApp: React.FC<MainAppProps> = ({ onBackToPreflight, activeModelNames, activeModelTags = [], primaryModelTag = '', hardware: _hardware }) => {
+  const { t: _t } = useApp();
   const [activeTab, setActiveTab] = useState<TabId>('files');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
 
-  const TAB_CONFIG: { id: TabId; labelKey: string; icon: React.ElementType; descriptionKey: string }[] = [
-    { id: 'files', labelKey: 'tab_explorer', icon: FolderOpen, descriptionKey: 'tab_explorer' },
-    { id: 'temp_cleaner', labelKey: 'tab_cleaner', icon: Zap, descriptionKey: 'tab_cleaner' },
-    { id: 'dashboard', labelKey: 'tab_chat', icon: HardDrive, descriptionKey: 'tab_chat' },
-    { id: 'organize', labelKey: 'tab_rules', icon: Sliders, descriptionKey: 'tab_rules' },
-    { id: 'storage', labelKey: 'tab_tiering', icon: Database, descriptionKey: 'tab_tiering' },
-    { id: 'search', labelKey: 'tab_semantic_search', icon: Search, descriptionKey: 'tab_semantic_search' }
+  const TAB_CONFIG: { id: TabId; label: string; icon: React.ElementType; description: string }[] = [
+    { id: 'files', label: 'Quản lý tệp', icon: FolderOpen, description: 'Cây thư mục & quét sâu' },
+    { id: 'temp_cleaner', label: 'Dọn rác hệ thống', icon: Zap, description: 'Xóa tệp tạm %TEMP%' },
+    { id: 'dashboard', label: 'Tổng quan & Chat AI', icon: HardDrive, description: 'Hỏi đáp trợ lý AI' },
+    { id: 'benchmark', label: 'Đo hiệu năng Laptop', icon: BarChart2, description: 'Benchmark AI thực tế' },
+    { id: 'organize', label: 'Quy tắc phân loại', icon: Sliders, description: 'Sắp xếp theo định dạng' },
+    { id: 'storage', label: 'Tối ưu lưu trữ', icon: Database, description: 'Phân tầng Hot/Warm/Cold' },
+    { id: 'search', label: 'Tìm kiếm ngữ nghĩa', icon: Search, description: 'Tìm kiếm theo nội dung' }
   ];
 
   const currentTab = TAB_CONFIG.find(t => t.id === activeTab)!;
@@ -75,7 +81,7 @@ export const MainApp: React.FC<MainAppProps> = ({ onBackToPreflight, activeModel
               {!isSidebarCollapsed && (
                 <div className="truncate">
                   <h1 className="font-semibold text-sm text-zinc-100 truncate">MMO Desktop</h1>
-                  <p className="text-[11px] text-zinc-500 truncate">File organizer</p>
+                  <p className="text-[11px] text-zinc-500 truncate">Python AI Core Engine</p>
                 </div>
               )}
             </div>
@@ -83,7 +89,7 @@ export const MainApp: React.FC<MainAppProps> = ({ onBackToPreflight, activeModel
             {!isSidebarCollapsed && (
               <button
                 onClick={toggleSidebar}
-                title="Thu gọn thanh bên (chỉ hiện icon)"
+                title="Thu gọn thanh bên"
                 className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer"
               >
                 <PanelLeftClose className="w-4 h-4" />
@@ -95,95 +101,59 @@ export const MainApp: React.FC<MainAppProps> = ({ onBackToPreflight, activeModel
             {TAB_CONFIG.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
-              const label = t(tab.labelKey);
               return (
                 <button
                   key={tab.id}
                   onClick={() => handleTabChange(tab.id)}
-                  title={isSidebarCollapsed ? label : undefined}
-                  className={`w-full flex items-center ${
-                    isSidebarCollapsed ? 'justify-center px-0 py-2.5' : 'gap-2.5 px-3 py-2'
-                  } rounded-lg text-xs font-medium transition-all duration-200 relative group cursor-pointer ${
+                  title={isSidebarCollapsed ? tab.label : undefined}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-all cursor-pointer ${
                     isActive
-                      ? 'text-indigo-300 bg-indigo-500/10'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-                  }`}
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-950/40'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                  } ${isSidebarCollapsed ? 'justify-center' : ''}`}
                 >
-                  {isActive && (
-                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-indigo-500 rounded-r-full" />
+                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-zinc-400'}`} />
+                  {!isSidebarCollapsed && (
+                    <span className="truncate">{tab.label}</span>
                   )}
-                  <Icon className={`w-4 h-4 shrink-0 transition-colors duration-200 ${isActive ? 'text-indigo-400' : 'text-zinc-500 group-hover:text-zinc-400'}`} />
-                  {!isSidebarCollapsed && <span className="truncate">{label}</span>}
                 </button>
               );
             })}
           </nav>
         </div>
 
-        {/* Bottom Area: AI Status & Sidebar Expand Toggle */}
-        <div className={`${isSidebarCollapsed ? 'px-2 pb-3' : 'px-3 pb-3'} space-y-2`}>
-          {isSidebarCollapsed ? (
-            <div className="flex flex-col items-center gap-2 py-1">
-              {/* Expand button at the bottom of collapsed sidebar */}
-              <button
-                onClick={toggleSidebar}
-                title="Mở rộng thanh bên"
-                className="w-9 h-9 rounded-xl bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 hover:text-zinc-100 flex items-center justify-center border border-zinc-700/50 transition-colors cursor-pointer shadow-sm"
-              >
-                <PanelLeftOpen className="w-4 h-4 text-indigo-400" />
-              </button>
-
-              <button
-                onClick={() => { sfx.click(); onBackToPreflight(); }}
-                title={`${activeModelNames.length} mô hình đang hoạt động. Nhấn để cấu hình.`}
-                className="w-9 h-9 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-center relative hover:border-zinc-700 transition-colors cursor-pointer"
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse absolute -top-0.5 -right-0.5" />
-                <Settings className="w-4 h-4 text-zinc-400" />
-              </button>
-            </div>
-          ) : (
-            <div className="bg-zinc-950/80 rounded-xl border border-zinc-800/60 p-3">
-              <div className="flex items-center gap-2 text-xs text-zinc-400 mb-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span>{activeModelNames.length} mô hình đang hoạt động</span>
-              </div>
-
-              <div className="space-y-1">
-                {activeModelNames.slice(0, 2).map((name, idx) => (
-                  <div key={idx} className="text-xs font-mono text-zinc-300 truncate bg-zinc-900/60 px-2 py-1 rounded border border-zinc-800/50">
-                    {name}
-                  </div>
-                ))}
-                {activeModelNames.length > 2 && (
-                  <div className="text-xs text-zinc-500">+{activeModelNames.length - 2} khác</div>
-                )}
-              </div>
-
-              <button
-                onClick={() => { sfx.click(); onBackToPreflight(); }}
-                className="mt-2.5 w-full py-1.5 text-xs bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 hover:text-zinc-100 rounded-lg border border-zinc-700/50 flex items-center justify-center gap-1.5 transition-all duration-200 cursor-pointer"
-              >
-                <Settings className="w-3.5 h-3.5 text-zinc-500" />
-                Cấu hình mô hình
-              </button>
-            </div>
+        {/* Sidebar Footer */}
+        <div className="p-3 border-t border-zinc-800/60 space-y-2">
+          {isSidebarCollapsed && (
+            <button
+              onClick={toggleSidebar}
+              title="Mở rộng thanh bên"
+              className="w-full flex justify-center p-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer"
+            >
+              <PanelLeftOpen className="w-4 h-4" />
+            </button>
           )}
+
+          <button
+            onClick={onBackToPreflight}
+            className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-xl transition-colors cursor-pointer ${
+              isSidebarCollapsed ? 'justify-center' : ''
+            }`}
+            title="Quay lại chọn mô hình AI"
+          >
+            <Settings className="w-4 h-4 shrink-0" />
+            {!isSidebarCollapsed && <span className="truncate">Cấu hình & Mô hình</span>}
+          </button>
         </div>
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col overflow-hidden bg-zinc-950">
-        {/* Top Header */}
-        <header className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/60 shrink-0 bg-zinc-950/80">
-          <div className="flex items-center gap-3">
-            <div className="p-1.5 rounded-lg bg-indigo-500/10">
-              {React.createElement(currentTab.icon, { className: 'w-4.5 h-4.5 text-indigo-400' })}
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-zinc-100">{t(currentTab.labelKey)}</h2>
-              <p className="text-xs text-zinc-500 mt-0.5">{t(currentTab.descriptionKey)}</p>
-            </div>
+      <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-zinc-950">
+        {/* Top Header Bar */}
+        <header className="h-14 px-6 border-b border-zinc-800/60 flex items-center justify-between shrink-0 bg-zinc-900/40">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-100">{currentTab.label}</h2>
+            <p className="text-[11px] text-zinc-500">{currentTab.description}</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -191,30 +161,38 @@ export const MainApp: React.FC<MainAppProps> = ({ onBackToPreflight, activeModel
           </div>
         </header>
 
-        {/* Tab Content with persistent state across tabs */}
-        <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative">
-          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'files' ? 'block' : 'hidden'}`}>
+        {/* Tab View Container */}
+        <div className="flex-1 min-h-0 overflow-hidden relative">
+          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'files' ? 'flex' : 'hidden'}`}>
             <FileExplorerTree />
           </div>
 
-          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'temp_cleaner' ? 'block' : 'hidden'}`}>
+          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'temp_cleaner' ? 'flex' : 'hidden'}`}>
             <DedicatedTempCleaner />
           </div>
 
-          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'organize' ? 'block' : 'hidden'}`}>
+          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'dashboard' ? 'flex' : 'hidden'}`}>
+            <DashboardOverviewView
+              activeModelTags={activeModelTags}
+              primaryModelTag={primaryModelTag}
+              activeModelNames={activeModelNames}
+            />
+          </div>
+
+          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'benchmark' ? 'flex' : 'hidden'}`}>
+            <BenchmarkDashboardView />
+          </div>
+
+          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'organize' ? 'flex' : 'hidden'}`}>
             <RuleConfigView />
           </div>
 
-          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'storage' ? 'block' : 'hidden'}`}>
+          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'storage' ? 'flex' : 'hidden'}`}>
             <TieringOptimizerView />
           </div>
 
-          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'search' ? 'block' : 'hidden'}`}>
+          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'search' ? 'flex' : 'hidden'}`}>
             <SemanticSearchView />
-          </div>
-
-          <div className={`h-full flex-1 min-h-0 overflow-y-auto flex flex-col ${activeTab === 'dashboard' ? 'block' : 'hidden'}`}>
-            <DashboardOverviewView />
           </div>
         </div>
       </main>

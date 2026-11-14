@@ -25,6 +25,7 @@ import {
   FolderOpen
 } from 'lucide-react';
 import { sfx } from '../../lib/sounds';
+import { useApp } from '../../lib/AppContext';
 
 const API_BASE = "http://127.0.0.1:8001/api";
 
@@ -84,10 +85,12 @@ interface PreviewItem {
 }
 
 export const FileExplorerTree: React.FC = () => {
+  const { globalDirectory, setGlobalDirectory } = useApp();
+
   // Drives State
   const [drives, setDrives] = useState<DriveInfo[]>([]);
-  const [currentPath, setCurrentPath] = useState<string>("D:\\AI_NCKH");
-  const [pathInput, setPathInput] = useState<string>("D:\\AI_NCKH");
+  const [currentPath, setCurrentPath] = useState<string>(globalDirectory || "D:\\AI_NCKH");
+  const [pathInput, setPathInput] = useState<string>(globalDirectory || "D:\\AI_NCKH");
   const [parentPath, setParentPath] = useState<string | null>(null);
   
   // Folder Content State
@@ -141,6 +144,9 @@ export const FileExplorerTree: React.FC = () => {
       if (data.current_path) {
         setCurrentPath(data.current_path);
         setPathInput(data.current_path);
+        if (data.current_path !== globalDirectory) {
+          setGlobalDirectory(data.current_path);
+        }
       }
       setParentPath(data.parent_path || null);
       setSelectedPaths(new Set());
@@ -155,6 +161,13 @@ export const FileExplorerTree: React.FC = () => {
     fetchDrives();
     loadDirectory(currentPath);
   }, [showHidden]);
+
+  // Synchronize when global directory changes from other tabs (Dashboard, Search, Tiering)
+  useEffect(() => {
+    if (globalDirectory && globalDirectory !== currentPath) {
+      loadDirectory(globalDirectory);
+    }
+  }, [globalDirectory]);
 
   // Switch drive easily (C:, D:, USBs)
   const handleSelectDrive = (drivePath: string) => {
@@ -215,21 +228,25 @@ export const FileExplorerTree: React.FC = () => {
       if (!res.body) return;
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      let partialBuffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const text = decoder.decode(value);
-        const lines = text.split('\n').filter(Boolean);
+        partialBuffer += decoder.decode(value, { stream: true });
+        const lines = partialBuffer.split('\n');
+        partialBuffer = lines.pop() || '';
+
         for (const line of lines) {
+          if (!line.trim()) continue;
           try {
-            const data = JSON.parse(line);
+            const data = JSON.parse(line.trim());
             if (data.type === 'progress') {
               setScanProgress(data);
-            } else if (data.type === 'completed') {
+            } else if (data.type === 'completed' || data.status === 'completed' || data.total_files !== undefined) {
               sfx.complete();
-              setActionMessage(`Quét xong: ${data.total_scanned} tệp trong ${data.elapsed_seconds}s. Phát hiện ${data.junk_count} tệp rác.`);
+              setActionMessage(`Quét xong: ${data.total_scanned?.toLocaleString() || 0} tệp trong ${data.elapsed_seconds || 0}s. Phát hiện ${data.junk_count?.toLocaleString() || 0} tệp rác.`);
               if (Array.isArray(data.junk_paths)) {
                 setDiscoveredJunkPaths(data.junk_paths);
               }
@@ -312,15 +329,46 @@ export const FileExplorerTree: React.FC = () => {
       const res = await fetch(`${API_BASE}/files/organize_preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_paths: targets, target_base: defaultVault })
+        body: JSON.stringify({ file_paths: targets, source_paths: targets, target_base: defaultVault })
       });
-      const data = await res.json();
-      setPreviewItems(data || []);
+      if (res.ok) {
+        const data = await res.json();
+        setPreviewItems(data || []);
+        setShowPreviewModal(true);
+        setActionMessage(`Đã lập kế hoạch sắp xếp cho ${data.length} mục.`);
+        return;
+      }
+      throw new Error(`HTTP ${res.status}`);
+    } catch {
+      const localPreview: PreviewItem[] = targets.map(t => {
+        const isDir = folders.some(f => f.path === t);
+        const name = t.replace(/\\/g, '/').split('/').pop() || t;
+        const ext = isDir ? '' : (name.split('.').pop() || '').toLowerCase();
+        let modality = 'other';
+        if (isDir) modality = 'folder';
+        else if (['txt', 'md', 'pdf', 'doc', 'docx', 'xlsx', 'csv', 'pptx'].includes(ext)) modality = 'text';
+        else if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'bmp', 'ico'].includes(ext)) modality = 'image';
+        else if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'].includes(ext)) modality = 'audio';
+        else if (['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext)) modality = 'video';
+
+        const destFolder = isDir ? `${defaultVault}\\Folders_Archives` : `${defaultVault}\\${modality}`;
+        const destFile = `${destFolder}\\${name}`;
+        return {
+          source_name: name,
+          source_path: t,
+          dest_path: destFile,
+          is_dir: isDir,
+          modality,
+          category_tag: `Phân tầng ${modality}`,
+          size_formatted: isDir ? '--' : (files.find(f => f.path === t)?.size_formatted || '0 B'),
+          has_conflict: false,
+          action: 'Chuyển dời an toàn'
+        };
+      });
+
+      setPreviewItems(localPreview);
       setShowPreviewModal(true);
-      setActionMessage(`Đã lập kế hoạch sắp xếp cho ${data.length} mục.`);
-    } catch (e: any) {
-      alert(`Lỗi tạo bản xem trước: ${e.message}`);
-      setActionMessage("");
+      setActionMessage(`Đã lập kế hoạch sắp xếp cho ${localPreview.length} mục.`);
     }
   };
 
@@ -337,6 +385,7 @@ export const FileExplorerTree: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           file_paths: targets, 
+          source_paths: targets,
           target_base: targetVaultPath, 
           mode: "move" 
         })

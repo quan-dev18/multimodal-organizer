@@ -127,7 +127,7 @@ export const DedicatedTempCleaner: React.FC = () => {
             const data = JSON.parse(line.trim());
             if (data.type === 'progress') {
               setCleanProgress(data);
-            } else if (data.type === 'completed') {
+            } else if (data.type === 'completed' || data.status === 'completed' || data.cleaned_count !== undefined) {
               sfx.complete();
               setLastResult(data);
               setActionStatus(data.message);

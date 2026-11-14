@@ -100,7 +100,7 @@ export const CostInsightsView: React.FC = () => {
               <tr>
                 <td className="p-3 font-medium text-zinc-200">Bảo mật & Quyền riêng tư</td>
                 <td className="p-3 text-zinc-400">Tải lên dịch vụ đám mây bên thứ ba</td>
-                <td className="p-3 text-emerald-400 font-medium">100% Cục bộ trên GPU GTX 1650</td>
+                <td className="p-3 text-emerald-400 font-medium">100% Xử lý cục bộ trên phần cứng máy (Offline)</td>
                 <td className="p-3 text-right text-emerald-400 font-medium">Tuyệt đối riêng tư</td>
               </tr>
             </tbody>

@@ -5,6 +5,17 @@ import requests
 import subprocess
 import sys
 import os
+import shutil
+import atexit
+import signal
+
+# Ensure UTF-8 output in Windows console
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 # Detect directory if frozen by PyInstaller or running directly
 if getattr(sys, 'frozen', False):
@@ -19,40 +30,45 @@ if BASE_DIR not in sys.path:
 if SIDECAR_DIR not in sys.path:
     sys.path.insert(0, SIDECAR_DIR)
 
-def ensure_ollama_running():
-    """Ensure Ollama daemon is running automatically on localhost:11434"""
+def cleanup_models():
+    """Immediately unload all active models from GPU VRAM to prevent VRAM exhaustion."""
     try:
-        r = requests.get("http://localhost:11434/api/version", timeout=1)
-        if r.status_code == 200:
-            return True
-    except:
+        try:
+            from sidecar.hardware import unload_all_ollama_models
+        except ImportError:
+            from hardware import unload_all_ollama_models
+        res = unload_all_ollama_models()
+        if res.get("unloaded"):
+            print(f"\n[VRAM Manager] Đã giải phóng hoàn toàn VRAM. Đã đóng các mô hình: {', '.join(res['unloaded'])}")
+    except Exception:
         pass
 
-    ollama_exe = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe")
-    if os.path.exists(ollama_exe):
+# Register automatic cleanup on process exit
+atexit.register(cleanup_models)
+
+def signal_handler(sig, frame):
+    cleanup_models()
+    sys.exit(0)
+
+try:
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+except Exception:
+    pass
+
+def ensure_ollama():
+    """Ensure Ollama daemon is running automatically on 127.0.0.1:11434"""
+    try:
         try:
-            env = os.environ.copy()
-            if "OLLAMA_MODELS" not in env or not env["OLLAMA_MODELS"]:
-                env["OLLAMA_MODELS"] = r"D:\OllamaModels"
-            
-            subprocess.Popen(
-                [ollama_exe, "serve"],
-                env=env,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            for _ in range(15):
-                time.sleep(0.4)
-                try:
-                    r = requests.get("http://localhost:11434/api/version", timeout=1)
-                    if r.status_code == 200:
-                        return True
-                except:
-                    pass
-        except Exception:
-            pass
-    return False
+            from sidecar.hardware import ensure_ollama_running
+        except ImportError:
+            from hardware import ensure_ollama_running
+        res = ensure_ollama_running(timeout=10.0)
+        print(f"[Ollama Launcher] Status: {res.get('success')} - {res.get('message')}")
+        return res.get("success", False)
+    except Exception as e:
+        print(f"[Ollama Launcher] Error: {e}")
+        return False
 
 def start_backend():
     import uvicorn
@@ -67,8 +83,11 @@ def start_backend():
     uvicorn.run(app, host="127.0.0.1", port=8001, log_level="warning")
 
 if __name__ == "__main__":
-    # 1. Start Ollama asynchronously
-    threading.Thread(target=ensure_ollama_running, daemon=True).start()
+    # 0. Clean up any leftover zombie models from previous sessions
+    threading.Thread(target=cleanup_models, daemon=True).start()
+
+    # 1. Start Ollama daemon asynchronously
+    threading.Thread(target=ensure_ollama, daemon=True).start()
 
     # 2. Check if backend is already listening
     backend_is_up = False
@@ -76,7 +95,7 @@ if __name__ == "__main__":
         r = requests.get("http://127.0.0.1:8001/api/health", timeout=0.6)
         if r.status_code == 200:
             backend_is_up = True
-    except:
+    except Exception:
         pass
 
     # 3. Launch backend if needed
@@ -103,5 +122,22 @@ if __name__ == "__main__":
         text_select=True,
         zoomable=True
     )
+
+    # Free all models from VRAM when the native window is closed
+    window.events.closed += cleanup_models
     
-    webview.start(debug=False)
+    try:
+        webview.start(debug=False)
+    except Exception as e:
+        print(f"[Desktop Host Warning] Không thể khởi chạy cửa sổ pywebview: {e}")
+        print("[Desktop Host] Tự động mở trình duyệt tại: http://127.0.0.1:8001 ...")
+        import webbrowser
+        webbrowser.open("http://127.0.0.1:8001")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            cleanup_models()
+            print("\nĐã dừng MMO Desktop và giải phóng VRAM.")
+    finally:
+        cleanup_models()
