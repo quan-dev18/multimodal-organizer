@@ -140,26 +140,29 @@ def get_hardware_info() -> Dict[str, Any]:
     }
 
     try:
-        import pynvml
-        pynvml.nvmlInit()
-        device_count = pynvml.nvmlDeviceGetCount()
-        if device_count > 0:
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            gpu_name = pynvml.nvmlDeviceGetName(handle)
-            if isinstance(gpu_name, bytes):
-                gpu_name = gpu_name.decode("utf-8")
-            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            total_vram = round(mem_info.total / (1024**3), 2)
-            used_vram = round(mem_info.used / (1024**3), 2)
-            free_vram = round(mem_info.free / (1024**3), 2)
-            gpu_info = {
-                "has_gpu": True,
-                "name": str(gpu_name),
-                "total_vram_gb": total_vram,
-                "used_vram_gb": used_vram,
-                "free_vram_gb": free_vram,
-                "vram_percent": round((used_vram / total_vram) * 100, 1) if total_vram > 0 else 0.0,
-            }
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            import pynvml
+            pynvml.nvmlInit()
+            device_count = pynvml.nvmlDeviceGetCount()
+            if device_count > 0:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                gpu_name = pynvml.nvmlDeviceGetName(handle)
+                if isinstance(gpu_name, bytes):
+                    gpu_name = gpu_name.decode("utf-8")
+                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                total_vram = round(mem_info.total / (1024**3), 2)
+                used_vram = round(mem_info.used / (1024**3), 2)
+                free_vram = round(mem_info.free / (1024**3), 2)
+                gpu_info = {
+                    "has_gpu": True,
+                    "name": str(gpu_name),
+                    "total_vram_gb": total_vram,
+                    "used_vram_gb": used_vram,
+                    "free_vram_gb": free_vram,
+                    "vram_percent": round((used_vram / total_vram) * 100, 1) if total_vram > 0 else 0.0,
+                }
     except Exception as e:
         # Fallback if no nvidia driver or pynvml failed
         pass
@@ -190,6 +193,9 @@ def check_ollama_status() -> Dict[str, Any]:
         "installed_or_running": False,  # Kept for backward compatibility
         "version": "unknown",
         "models": [],
+        "installed_models": [],
+        "chat_models": [],
+        "embedding_models": [],
         "running_models": [],
         "url": ollama_url,
         "executable_path": exe_path,
@@ -215,6 +221,16 @@ def check_ollama_status() -> Dict[str, Any]:
                         "modified_at": m.get("modified_at")
                     }
                     for m in models_data
+                ]
+                status["installed_models"] = [m.get("name") for m in models_data if m.get("name")]
+                # Distinguish chat models vs embedding models
+                status["chat_models"] = [
+                    name for name in status["installed_models"]
+                    if not any(k in name.lower() for k in ["embed", "bge", "bert", "clip"])
+                ]
+                status["embedding_models"] = [
+                    name for name in status["installed_models"]
+                    if any(k in name.lower() for k in ["embed", "bge", "bert", "clip"])
                 ]
 
             # Get currently loaded models in VRAM/RAM

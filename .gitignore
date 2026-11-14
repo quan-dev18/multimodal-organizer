@@ -24,14 +24,12 @@ env/
 venv/
 ENV/
 .venv/
-build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -39,6 +37,11 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+!frontend/src/lib/
+
+# Word documents
+*.doc
+*.docx
 
 # Data / SQLite / LanceDB / Cache
 *.db

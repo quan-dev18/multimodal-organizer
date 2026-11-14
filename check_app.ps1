@@ -1,10 +1,14 @@
-Write-Host "[1/5] Kiem tra file thuc thi MMO.exe..." -ForegroundColor Cyan
-if (Test-Path "D:\AI_NCKH\MMO.exe") {
-    $file = Get-Item "D:\AI_NCKH\MMO.exe"
-    $sizeMb = [Math]::Round($file.Length / 1MB, 2)
-    Write-Host "  -> Tim thay MMO.exe ($sizeMb MB) cap nhat luc $($file.LastWriteTime)" -ForegroundColor Green
+Write-Host "[1/5] Kiem tra moi truong va tep khoi chay MMO..." -ForegroundColor Cyan
+if (Test-Path "D:\AI_NCKH\run_desktop.py") {
+    Write-Host "  -> Tim thay run_desktop.py (Desktop Host Engine)" -ForegroundColor Green
+}
+if (Test-Path "D:\AI_NCKH\launch_mmo.bat") {
+    Write-Host "  -> Tim thay launch_mmo.bat & CHAY_MMO_DESKTOP.bat (1-Click Run)" -ForegroundColor Green
+}
+if (Test-Path "D:\AI_NCKH\frontend\dist\index.html") {
+    Write-Host "  -> Tim thay frontend\dist\index.html (Giao dien React san sang)" -ForegroundColor Green
 } else {
-    Write-Host "  -> CHUA TIM THAY MMO.exe!" -ForegroundColor Red
+    Write-Host "  -> CHUA TIM THAY frontend\dist\index.html! Vui long build frontend." -ForegroundColor Red
 }
 
 Write-Host "`n[2/5] Kiem tra dich vu Ollama Local (127.0.0.1:11434)..." -ForegroundColor Cyan
@@ -27,14 +31,15 @@ try {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:8001/api/health" -TimeoutSec 2
     Write-Host "  -> Backend dang hoat dong: Engine=$($health.engine), Status=$($health.status)" -ForegroundColor Green
 } catch {
-    Write-Host "  -> MMO.exe hien chua bat hoac backend dang nghi." -ForegroundColor Yellow
+    Write-Host "  -> MMO Backend hien chua bat (se duoc tu dong bat khi chay launch_mmo.bat)." -ForegroundColor Yellow
 }
 
-Write-Host "`n[4/5] Kiem tra Web Benchmark doc lap..." -ForegroundColor Cyan
+Write-Host "`n[4/5] Kiem tra Web Benchmark & Splash Screen..." -ForegroundColor Cyan
 if (Test-Path "D:\AI_NCKH\benchmark.html") {
     Write-Host "  -> Co the click dup mo truc tiep: D:\AI_NCKH\benchmark.html" -ForegroundColor Green
-} else {
-    Write-Host "  -> Chua co file benchmark.html" -ForegroundColor Red
+}
+if (Test-Path "D:\AI_NCKH\splash.html") {
+    Write-Host "  -> splash.html san sang khoi dong muot ma" -ForegroundColor Green
 }
 
 Write-Host "`n[5/5] Kiem tra thiet bi phan cung GPU..." -ForegroundColor Cyan

@@ -47,10 +47,16 @@ export const BenchmarkDashboardView: React.FC = () => {
     fetch(`${API_BASE}/ollama/status`)
       .then(r => r.json())
       .then(data => {
-        if (data && Array.isArray(data.installed_models) && data.installed_models.length > 0) {
-          setInstalledModels(data.installed_models);
-          if (!selectedModel || !data.installed_models.includes(selectedModel)) {
-            setSelectedModel(data.installed_models[0]);
+        if (!data) return;
+        const available = (data.chat_models && data.chat_models.length > 0)
+          ? data.chat_models
+          : (data.installed_models && data.installed_models.length > 0
+              ? data.installed_models
+              : (data.models?.map((m: any) => m.name) || []));
+        if (available.length > 0) {
+          setInstalledModels(available);
+          if (!selectedModel || !available.includes(selectedModel)) {
+            setSelectedModel(available[0]);
           }
         }
       })

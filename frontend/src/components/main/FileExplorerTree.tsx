@@ -25,6 +25,7 @@ import {
   FolderOpen
 } from 'lucide-react';
 import { sfx } from '../../lib/sounds';
+import { useApp } from '../../lib/AppContext';
 
 const API_BASE = "http://127.0.0.1:8001/api";
 
@@ -84,10 +85,12 @@ interface PreviewItem {
 }
 
 export const FileExplorerTree: React.FC = () => {
+  const { globalDirectory, setGlobalDirectory } = useApp();
+
   // Drives State
   const [drives, setDrives] = useState<DriveInfo[]>([]);
-  const [currentPath, setCurrentPath] = useState<string>("D:\\AI_NCKH");
-  const [pathInput, setPathInput] = useState<string>("D:\\AI_NCKH");
+  const [currentPath, setCurrentPath] = useState<string>(globalDirectory || "D:\\AI_NCKH");
+  const [pathInput, setPathInput] = useState<string>(globalDirectory || "D:\\AI_NCKH");
   const [parentPath, setParentPath] = useState<string | null>(null);
   
   // Folder Content State
@@ -141,6 +144,9 @@ export const FileExplorerTree: React.FC = () => {
       if (data.current_path) {
         setCurrentPath(data.current_path);
         setPathInput(data.current_path);
+        if (data.current_path !== globalDirectory) {
+          setGlobalDirectory(data.current_path);
+        }
       }
       setParentPath(data.parent_path || null);
       setSelectedPaths(new Set());
@@ -155,6 +161,13 @@ export const FileExplorerTree: React.FC = () => {
     fetchDrives();
     loadDirectory(currentPath);
   }, [showHidden]);
+
+  // Synchronize when global directory changes from other tabs (Dashboard, Search, Tiering)
+  useEffect(() => {
+    if (globalDirectory && globalDirectory !== currentPath) {
+      loadDirectory(globalDirectory);
+    }
+  }, [globalDirectory]);
 
   // Switch drive easily (C:, D:, USBs)
   const handleSelectDrive = (drivePath: string) => {

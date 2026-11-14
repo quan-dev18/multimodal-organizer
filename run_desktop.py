@@ -92,4 +92,15 @@ if __name__ == "__main__":
         zoomable=True
     )
     
-    webview.start(debug=False)
+    try:
+        webview.start(debug=False)
+    except Exception as e:
+        print(f"[Desktop Host Warning] Không thể khởi chạy cửa sổ pywebview: {e}")
+        print("[Desktop Host] Tự động mở trình duyệt tại: http://127.0.0.1:8001 ...")
+        import webbrowser
+        webbrowser.open("http://127.0.0.1:8001")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nĐã dừng MMO Desktop.")

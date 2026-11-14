@@ -53,7 +53,7 @@ export const DashboardOverviewView: React.FC<DashboardOverviewViewProps> = ({
       const saved = localStorage.getItem('mmo_chat_model');
       if (saved) return saved;
     } catch {}
-    return primaryModelTag || (activeModelTags.length > 0 ? activeModelTags[0] : 'qwen2.5:1.5b');
+    return primaryModelTag || (activeModelTags.length > 0 ? activeModelTags[0] : 'llama3.2:1b');
   });
 
   const { globalDirectory, setGlobalDirectory } = useApp();
@@ -70,11 +70,17 @@ export const DashboardOverviewView: React.FC<DashboardOverviewViewProps> = ({
     fetch(`${API_BASE}/ollama/status`)
       .then(r => r.json())
       .then(data => {
-        if (data && Array.isArray(data.installed_models) && data.installed_models.length > 0) {
-          setInstalledModels(data.installed_models);
+        if (!data) return;
+        const available = (data.chat_models && data.chat_models.length > 0)
+          ? data.chat_models
+          : (data.installed_models && data.installed_models.length > 0
+              ? data.installed_models
+              : (data.models?.map((m: any) => m.name) || []));
+        if (available.length > 0) {
+          setInstalledModels(available);
           // If current model not installed, pick the first available
-          if (!data.installed_models.includes(selectedChatModel)) {
-            setSelectedChatModel(data.installed_models[0]);
+          if (!available.includes(selectedChatModel)) {
+            setSelectedChatModel(available[0]);
           }
         }
       })
@@ -181,10 +187,18 @@ export const DashboardOverviewView: React.FC<DashboardOverviewViewProps> = ({
     setIsAiReplying(true);
 
     try {
+      const recentHistory = chatMessages.slice(-6).map(m => ({
+        role: m.sender === 'user' ? 'user' : 'assistant',
+        content: m.text
+      }));
       const res = await fetch(`${API_BASE}/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userText, model: selectedChatModel })
+        body: JSON.stringify({
+          message: userText,
+          model: selectedChatModel,
+          history: recentHistory
+        })
       });
       const data = await res.json();
       const botText = data.reply || "Xin lỗi, hiện tại tôi chưa thể kết nối tới mô hình AI.";

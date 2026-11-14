@@ -39,7 +39,7 @@ export function App() {
         if (Array.isArray(parsed) && parsed.length > 0) return new Set(parsed);
       }
     } catch {}
-    return new Set(["qwen2.5:1.5b"]);
+    return new Set(["llama3.2:1b"]);
   });
 
   // Batch download state
@@ -75,22 +75,35 @@ export function App() {
   const refreshSystemInfo = async () => {
     setLoadingHardware(true);
     try {
-      const [hwRes, ollamaRes, clusRes, catRes, pathRes] = await Promise.all([
+      const [hwRes, ollamaRes, clusRes, catRes, pathRes, cfgRes] = await Promise.all([
         fetch(`${API_BASE}/hardware`).then(r => r.json()).catch(() => null),
         fetch(`${API_BASE}/ollama/status`).then(r => r.json()).catch(() => null),
         fetch(`${API_BASE}/models/clusters`).then(r => r.json()).catch(() => null),
         fetch(`${API_BASE}/models/catalog`).then(r => r.json()).catch(() => null),
-        fetch(`${API_BASE}/models/storage_location`).then(r => r.json()).catch(() => null)
+        fetch(`${API_BASE}/models/storage_location`).then(r => r.json()).catch(() => null),
+        fetch(`${API_BASE}/config`).then(r => r.json()).catch(() => null)
       ]);
 
       if (hwRes) setHardware(hwRes);
       if (ollamaRes) {
         setOllamaStatus(ollamaRes);
-// Respect user explicit model selection; do not auto-force all installed models
+        const installed: string[] = ollamaRes.installed_models || ollamaRes.models?.map((m: any) => m.name) || [];
+        // Auto-select installed models if current selection has none installed
+        setSelectedModelIds(prev => {
+          const hasAnyInstalled = Array.from(prev).some(id =>
+            installed.some(tag => tag.includes(id) || id.includes(tag))
+          );
+          if (!hasAnyInstalled && installed.length > 0) {
+            const chatModel = installed.find(t => !t.includes("embed") && !t.includes("bge")) || installed[0];
+            return new Set([chatModel]);
+          }
+          return prev;
+        });
       }
       if (clusRes && clusRes.length > 0) setClusters(clusRes);
       if (catRes && catRes.length > 0) setFlatCatalog(catRes);
       if (pathRes && pathRes.current_path) setStoragePath(pathRes.current_path);
+      if (cfgRes && cfgRes.model_storage_path) setStoragePath(cfgRes.model_storage_path);
     } catch (e) {
       console.error("Lỗi kết nối", e);
     } finally {
@@ -120,6 +133,12 @@ export function App() {
     try {
       localStorage.setItem('mmo_selected_models', JSON.stringify(Array.from(next)));
     } catch {}
+    // Sync active_models to config.json
+    fetch(`${API_BASE}/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active_models: Array.from(next) })
+    }).catch(() => {});
   };
 
   // Open native Windows folder selector dialog
