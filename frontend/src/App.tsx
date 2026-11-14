@@ -6,7 +6,7 @@ import type { ModelItem, ModelCluster, BatchDownloadStatus } from './components/
 import { BenchmarkCard } from './components/preflight/BenchmarkCard';
 import { ModelComparisonModal } from './components/preflight/ModelComparisonModal';
 import { MainApp } from './components/main/MainApp';
-import { ArrowRight, RefreshCw, CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+import { ArrowRight, RefreshCw, CheckCircle2, AlertCircle, Info, X, Zap } from 'lucide-react';
 import { ThemeAndLangControls } from './lib/ThemeAndLangControls';
 import { useApp } from './lib/AppContext';
 import { sfx } from './lib/sounds';
@@ -116,6 +116,42 @@ export function App() {
     const interval = setInterval(refreshSystemInfo, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  // Automatically unload all models and release VRAM when app window or tab is closed
+  useEffect(() => {
+    const handleUnload = () => {
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(`${API_BASE}/models/unload_all`);
+        } else {
+          fetch(`${API_BASE}/models/unload_all`, { method: 'POST', keepalive: true }).catch(() => {});
+        }
+      } catch {}
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+    };
+  }, []);
+
+  const handleFreeVram = async () => {
+    sfx.click();
+    try {
+      const res = await fetch(`${API_BASE}/models/unload_all`, { method: 'POST' });
+      const data = await res.json();
+      showToast(
+        data.unloaded && data.unloaded.length > 0
+          ? `Đã giải phóng VRAM thành công! Đã đóng: ${data.unloaded.join(', ')}`
+          : "VRAM hiện tại đã hoàn toàn sạch sẽ, không có mô hình nào chạy ngầm.",
+        'success'
+      );
+      await refreshSystemInfo();
+    } catch (e: any) {
+      showToast(`Lỗi giải phóng VRAM: ${e.message}`, 'error');
+    }
+  };
 
   const handleToggleModel = (m: ModelItem) => {
     sfx.toggle();
@@ -467,6 +503,15 @@ export function App() {
           </button>
 
           <button
+            onClick={handleFreeVram}
+            className="px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 rounded-lg text-xs flex items-center gap-1.5 border border-rose-800/60 transition-colors cursor-pointer"
+            title="Đóng các mô hình đang chiếm dụng bộ nhớ để giải phóng 100% VRAM GPU"
+          >
+            <Zap className="w-3.5 h-3.5 text-rose-400" />
+            Giải phóng VRAM
+          </button>
+
+          <button
             onClick={() => {
               sfx.click();
               setIsComparisonOpen(true);
@@ -545,6 +590,7 @@ export function App() {
             modelVramGb={totalModelVram}
             appName={`Cụm ${selectedModelIds.size} mô hình đã chọn`}
             gpuName={gpuName}
+            onFreeVram={handleFreeVram}
           />
         </div>
 

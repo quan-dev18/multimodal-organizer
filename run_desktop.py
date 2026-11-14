@@ -6,6 +6,8 @@ import subprocess
 import sys
 import os
 import shutil
+import atexit
+import signal
 
 # Ensure UTF-8 output in Windows console
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
@@ -27,6 +29,32 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 if SIDECAR_DIR not in sys.path:
     sys.path.insert(0, SIDECAR_DIR)
+
+def cleanup_models():
+    """Immediately unload all active models from GPU VRAM to prevent VRAM exhaustion."""
+    try:
+        try:
+            from sidecar.hardware import unload_all_ollama_models
+        except ImportError:
+            from hardware import unload_all_ollama_models
+        res = unload_all_ollama_models()
+        if res.get("unloaded"):
+            print(f"\n[VRAM Manager] Đã giải phóng hoàn toàn VRAM. Đã đóng các mô hình: {', '.join(res['unloaded'])}")
+    except Exception:
+        pass
+
+# Register automatic cleanup on process exit
+atexit.register(cleanup_models)
+
+def signal_handler(sig, frame):
+    cleanup_models()
+    sys.exit(0)
+
+try:
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+except Exception:
+    pass
 
 def ensure_ollama():
     """Ensure Ollama daemon is running automatically on 127.0.0.1:11434"""
@@ -55,6 +83,9 @@ def start_backend():
     uvicorn.run(app, host="127.0.0.1", port=8001, log_level="warning")
 
 if __name__ == "__main__":
+    # 0. Clean up any leftover zombie models from previous sessions
+    threading.Thread(target=cleanup_models, daemon=True).start()
+
     # 1. Start Ollama daemon asynchronously
     threading.Thread(target=ensure_ollama, daemon=True).start()
 
@@ -91,6 +122,9 @@ if __name__ == "__main__":
         text_select=True,
         zoomable=True
     )
+
+    # Free all models from VRAM when the native window is closed
+    window.events.closed += cleanup_models
     
     try:
         webview.start(debug=False)
@@ -103,4 +137,7 @@ if __name__ == "__main__":
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("\nĐã dừng MMO Desktop.")
+            cleanup_models()
+            print("\nĐã dừng MMO Desktop và giải phóng VRAM.")
+    finally:
+        cleanup_models()

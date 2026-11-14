@@ -7,6 +7,7 @@ interface VramGaugeProps {
   modelVramGb: number;
   appName?: string;
   gpuName?: string;
+  onFreeVram?: () => void;
 }
 
 export const VramGauge: React.FC<VramGaugeProps> = ({
@@ -14,7 +15,8 @@ export const VramGauge: React.FC<VramGaugeProps> = ({
   usedVramOtherGb = 1.3,
   modelVramGb = 1.6,
   appName = "Mô hình đã chọn",
-  gpuName = "Thiết bị đồ họa (GPU)"
+  gpuName = "Thiết bị đồ họa (GPU)",
+  onFreeVram
 }) => {
   const total = Math.max(totalVramGb, 0.1);
   const targetThresholdGb = total * 0.85; // 85% an toàn
@@ -38,9 +40,20 @@ export const VramGauge: React.FC<VramGaugeProps> = ({
           <span className="font-medium text-zinc-200">Bộ nhớ đồ họa (VRAM):</span>
           <span className="text-zinc-400">{gpuName}</span>
         </div>
-        <div className="flex items-center gap-2 text-zinc-400">
-          <span>Ngưỡng đề xuất:</span>
-          <span className="text-zinc-300 font-mono font-medium">{targetThresholdGb.toFixed(1)} GB</span>
+        <div className="flex items-center gap-3 text-zinc-400">
+          {onFreeVram && (
+            <button
+              onClick={onFreeVram}
+              className="px-2 py-0.5 rounded bg-zinc-800/80 hover:bg-rose-950/70 hover:border-rose-700 hover:text-rose-200 text-zinc-300 border border-zinc-700 text-[11px] transition-colors cursor-pointer flex items-center gap-1 shadow-sm"
+              title="Đóng các mô hình đang chiếm dụng bộ nhớ để giải phóng 100% VRAM GPU"
+            >
+              Giải phóng VRAM
+            </button>
+          )}
+          <div className="flex items-center gap-1.5">
+            <span>Ngưỡng đề xuất:</span>
+            <span className="text-zinc-300 font-mono font-medium">{targetThresholdGb.toFixed(1)} GB</span>
+          </div>
         </div>
       </div>
 

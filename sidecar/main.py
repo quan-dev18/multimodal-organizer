@@ -12,9 +12,10 @@ from typing import Optional, List, Dict, Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import atexit
 import threading
 import webbrowser
-from hardware import get_hardware_info, check_ollama_status, ensure_ollama_running, find_ollama_executable
+from hardware import get_hardware_info, check_ollama_status, ensure_ollama_running, find_ollama_executable, unload_all_ollama_models
 from models_catalog import get_all_model_clusters, get_flat_catalog
 from file_manager import (
     get_system_drives, 
@@ -28,6 +29,19 @@ from file_manager import (
 )
 
 app = FastAPI(title="MMO Multimodal Core Engine", version="1.2.0")
+
+# Auto-cleanup: free VRAM at process exit
+atexit.register(unload_all_ollama_models)
+
+@app.on_event("startup")
+def on_startup():
+    # Purge any leftover zombie models from previous sessions on startup to free VRAM
+    threading.Thread(target=unload_all_ollama_models, daemon=True).start()
+
+@app.on_event("shutdown")
+def on_shutdown():
+    # Immediately release 100% of GPU VRAM when backend stops
+    unload_all_ollama_models()
 
 # Automatically ensure Ollama daemon is running on backend launch
 threading.Thread(target=ensure_ollama_running, daemon=True).start()
@@ -246,6 +260,13 @@ def api_select_folder(req: Optional[SelectFolderRequest] = None):
         return {"success": False, "message": "Người dùng đã hủy chọn thư mục."}
     except Exception as e:
         return {"success": False, "message": f"Lỗi mở hộp thoại: {str(e)}"}
+
+# Unload All Models from GPU VRAM immediately
+@app.post("/api/models/unload_all")
+def api_unload_all_models():
+    """Unload all active models from GPU VRAM immediately to free up memory."""
+    res = unload_all_ollama_models()
+    return res
 
 # Delete Model via Ollama API
 @app.post("/api/models/delete")

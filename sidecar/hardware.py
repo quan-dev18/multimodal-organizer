@@ -253,3 +253,30 @@ def check_ollama_status() -> Dict[str, Any]:
         status["error_message"] = str(e)
 
     return status
+
+def unload_all_ollama_models(timeout: float = 3.0) -> Dict[str, Any]:
+    """
+    Query all currently loaded models in Ollama via /api/ps and immediately
+    unload each one from GPU VRAM via keep_alive: 0 to free 100% of GPU VRAM.
+    """
+    ollama_url = "http://127.0.0.1:11434"
+    unloaded = []
+    try:
+        r = requests.get(f"{ollama_url}/api/ps", timeout=timeout)
+        if r.status_code == 200:
+            running = r.json().get("models", [])
+            for item in running:
+                name = item.get("name") or item.get("model")
+                if name:
+                    try:
+                        requests.post(
+                            f"{ollama_url}/api/generate",
+                            json={"model": name, "keep_alive": 0, "stream": False},
+                            timeout=2.5
+                        )
+                        unloaded.append(name)
+                    except Exception:
+                        pass
+        return {"success": True, "unloaded": unloaded, "count": len(unloaded)}
+    except Exception as e:
+        return {"success": False, "error": str(e), "unloaded": []}
